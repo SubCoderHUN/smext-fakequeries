@@ -201,6 +201,8 @@ class ExtensionConfig(object):
       cxx.cxxflags += ['-Wno-implicit-int-float-conversion']
     if cxx.version >= 'gcc-8.0':
       cxx.cxxflags += ['-Wno-class-memaccess']
+    if cxx.version >= 'gcc-12.0':
+      cxx.cxxflags += ['-Wno-maybe-uninitialized']
 
     if have_clang:
       cxx.cxxflags += ['-Wno-implicit-exception-spec-mismatch']
