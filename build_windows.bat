@@ -40,6 +40,33 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+REM -- Check that MSVC is targeting x86 (32-bit), NOT x64 ---------------------
+REM HL2SDK uses __asm blocks which are only supported by the 32-bit MSVC compiler.
+REM If cl.exe targets x64, the build will fail with hundreds of __asm errors.
+cl 2>&1 | findstr /i "x86" >nul
+if %ERRORLEVEL% neq 0 (
+    cl 2>&1 | findstr /i "x64 ARM" >nul
+    if !ERRORLEVEL! equ 0 (
+        echo ERROR: MSVC is targeting x64 or ARM, but this project requires x86 ^(32-bit^).
+        echo.
+        echo The HL2SDK uses __asm blocks that only work with the 32-bit MSVC compiler.
+        echo.
+        echo To fix, open the correct prompt or run vcvarsall.bat with 'x86':
+        echo.
+        echo   Option 1: Open "x86 Native Tools Command Prompt for VS 2022"
+        echo             ^(Start Menu ^> search "x86 Native Tools"^)
+        echo.
+        echo   Option 2: In your current terminal, run:
+        echo             "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x86
+        echo.
+        echo   Option 3 ^(VS 2019^):
+        echo             "C:\Program Files ^(x86^)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat" x86
+        echo.
+        echo   Then re-run: build_windows.bat
+        exit /b 1
+    )
+)
+
 REM -- Check Python -----------------------------------------------------------
 where python >nul 2>&1
 if %ERRORLEVEL% neq 0 (

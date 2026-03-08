@@ -83,14 +83,16 @@ C:\sourcemod-dev\
 
 ### 3. Configure and Build
 
-**CRITICAL**: You MUST run the build from a **Developer Command Prompt for VS 2019/2022** (or **x86 Native Tools Command Prompt for VS**) so that the MSVC compiler (`cl.exe`) is available.
+**CRITICAL**: You MUST use the **x86 (32-bit)** MSVC compiler. The HL2SDK contains `__asm` inline assembly blocks that are **only** supported by the 32-bit MSVC compiler. Using the x64 compiler will produce hundreds of `__asm keyword not supported on this architecture` errors.
 
-How to open it:
-- Start Menu > search for **"Developer Command Prompt for VS 2022"** (or 2019)
+How to open the correct prompt:
+- Start Menu > search for **"x86 Native Tools Command Prompt for VS 2022"** (or 2019)
+- **DO NOT** use "x64 Native Tools" or the generic "Developer Command Prompt" (which defaults to x64 on 64-bit Windows)
 - Or run this first in a regular cmd:
   ```cmd
   "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x86
   ```
+- Verify with: `cl` — the banner should say **"x86"**, NOT "x64" or "AMD64"
 
 Then build:
 
@@ -355,8 +357,15 @@ Or place the SDK folders in a parent directory of the extension source — AMBui
 #### `Could not find a source copy of Metamod:Source`
 - Ensure `metamod-source/` exists with the full source tree (not a binary release)
 
+#### `__asm keyword not supported on this architecture` (hundreds of errors)
+- You are using the **x64 (64-bit) MSVC compiler** instead of x86 (32-bit)
+- The HL2SDK uses inline assembly (`__asm`) which is only supported by the 32-bit compiler
+- **Fix**: Open **"x86 Native Tools Command Prompt for VS 2022"** (NOT "x64 Native Tools", NOT the generic "Developer Command Prompt")
+- Or run: `"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x86`
+- Verify: run `cl` alone — the banner must say **"x86"**, not "x64" or "AMD64"
+
 #### MSVC / `cl.exe` not found on Windows
-- Run from **Developer Command Prompt for VS** or **x86 Native Tools Command Prompt**
+- Run from **x86 Native Tools Command Prompt for VS**
 - Or run: `"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x86`
 
 #### Linker errors on Windows (missing .lib files)
