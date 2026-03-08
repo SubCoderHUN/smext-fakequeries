@@ -1,0 +1,55 @@
+"Phrases"
+{
+	"RTV Not Allowed"
+	{
+		"en"		"Rock the Vote is not available yet."
+	}
+
+	"RTV Started"
+	{
+		"en"		"A map vote is already in progress."
+	}
+
+	"RTV Ended"
+	{
+		"en"		"Map voting has already concluded."
+	}
+
+	"Already Voted"
+	{
+		"#format"	"{1:d},{2:d}"
+		"en"		"You have already rocked the vote. ({1} votes, {2} required)"
+	}
+
+	"Minimal Players Not Met"
+	{
+		"en"		"Not enough players to rock the vote."
+	}
+
+	"RTV Requested"
+	{
+		"#format"	"{1:s},{2:d},{3:d}"
+		"en"		"{1} wants to rock the vote. ({2} votes, {3} required)"
+	}
+
+	"RTV Vote Ready"
+	{
+		"en"		"Rocking the Vote!"
+	}
+
+	"No Votes"
+	{
+		"en"		"No votes received, keeping current map."
+	}
+
+	"Current Map Stays"
+	{
+		"en"		"Current map continues! The vote has spoken!"
+	}
+
+	"Changing Maps"
+	{
+		"#format"	"{1:s}"
+		"en"		"Changing map to {1}!"
+	}
+}
