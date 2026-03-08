@@ -119,8 +119,8 @@ if not exist "hl2sdk-csgo" (
 )
 
 if not exist "metamod-source" (
-    echo Cloning Metamod:Source...
-    git clone --depth 1 https://github.com/alliedmodders/metamod-source.git metamod-source
+    echo Cloning Metamod:Source ^(1.11-dev branch, PLAPI v16 - matches most CS:GO servers^)...
+    git clone --depth 1 -b 1.11-dev https://github.com/alliedmodders/metamod-source.git metamod-source
     if !ERRORLEVEL! neq 0 (
         echo ERROR: Failed to clone Metamod:Source.
         exit /b 1

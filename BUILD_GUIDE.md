@@ -65,7 +65,7 @@ cd C:\sourcemod-dev
 
 git clone https://github.com/SubCoderHUN/smext-fakequeries.git
 git clone --depth 1 -b csgo https://github.com/alliedmodders/hl2sdk.git hl2sdk-csgo
-git clone --depth 1 https://github.com/alliedmodders/metamod-source.git metamod-source
+git clone --depth 1 -b 1.11-dev https://github.com/alliedmodders/metamod-source.git metamod-source
 git clone --depth 1 -b 1.8-dev https://github.com/alliedmodders/sourcemod.git sourcemod
 cd sourcemod
 git submodule update --init --depth 1
@@ -293,7 +293,7 @@ mkdir -p ~/sourcemod-dev && cd ~/sourcemod-dev
 git clone https://github.com/SubCoderHUN/smext-fakequeries.git
 cd ..
 git clone --depth 1 -b csgo https://github.com/alliedmodders/hl2sdk.git hl2sdk-csgo
-git clone --depth 1 https://github.com/alliedmodders/metamod-source.git metamod-source
+git clone --depth 1 -b 1.11-dev https://github.com/alliedmodders/metamod-source.git metamod-source
 git clone --depth 1 -b 1.8-dev https://github.com/alliedmodders/sourcemod.git sourcemod
 cd sourcemod && git submodule update --init --depth 1 && cd ..
 ```
