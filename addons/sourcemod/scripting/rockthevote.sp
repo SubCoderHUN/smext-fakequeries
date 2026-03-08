@@ -1406,39 +1406,3 @@ void CreateNextVote()
 	delete tempMaps;
 }
 
-/* String contains helper (case-insensitive substring search) */
-int StrContains(const char[] haystack, const char[] needle, bool caseSensitive = true)
-{
-	int needleLen = strlen(needle);
-	int haystackLen = strlen(haystack);
-
-	if (needleLen > haystackLen)
-		return -1;
-
-	for (int i = 0; i <= haystackLen - needleLen; i++)
-	{
-		bool found = true;
-		for (int j = 0; j < needleLen; j++)
-		{
-			char a = haystack[i + j];
-			char b = needle[j];
-
-			if (!caseSensitive)
-			{
-				if (a >= 'A' && a <= 'Z') a += 32;
-				if (b >= 'A' && b <= 'Z') b += 32;
-			}
-
-			if (a != b)
-			{
-				found = false;
-				break;
-			}
-		}
-
-		if (found)
-			return i;
-	}
-
-	return -1;
-}
