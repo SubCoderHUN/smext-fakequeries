@@ -300,6 +300,11 @@ void FakeQuery::Hook_GameServerSteamAPIActivated(bool bActivated)
 
     CDetourManager::Init(smutils->GetScriptingEngine(), g_pGameConfig);
     g_pDetourFunc = DETOUR_CREATE_MEMBER(DetourFunc, pFunc);
+    if(!g_pDetourFunc)
+    {
+        smutils->LogError(myself, "Failed to create detour for ValidateChallengeFunc");
+        RETURN_META(MRES_IGNORED);
+    }
     g_pDetourFunc->EnableDetour();
 
     RETURN_META(MRES_IGNORED);
