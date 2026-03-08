@@ -49,54 +49,38 @@ if %ERRORLEVEL% neq 0 (
 )
 
 REM -- Check/install AMBuild --------------------------------------------------
-REM Try to find ambuild on PATH first
-where ambuild >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    REM Also check the user Scripts directory (pip --user install location)
-    for /f "delims=" %%i in ('python -c "import site; print(site.getusersitepackages().replace(chr(92)+chr(76)+chr(105)+chr(98), chr(92)+chr(83)+chr(99)+chr(114)+chr(105)+chr(112)+chr(116)+chr(115)))" 2^>nul') do set "USER_SCRIPTS=%%i"
-    if defined USER_SCRIPTS (
-        if exist "!USER_SCRIPTS!\ambuild.exe" (
-            set "PATH=!USER_SCRIPTS!;!PATH!"
-            goto :ambuild_found
-        )
-    )
+call :find_ambuild
+if !ERRORLEVEL! equ 0 goto :ambuild_ready
 
-    echo AMBuild not found. Installing...
-    python -m pip install git+https://github.com/alliedmodders/ambuild
+echo AMBuild not found. Installing...
+python -m pip install git+https://github.com/alliedmodders/ambuild
 
-    REM Refresh PATH: check common install locations for ambuild
-    REM 1. Python Scripts dir (system-wide install)
-    for /f "delims=" %%i in ('python -c "import sys,os; print(os.path.join(sys.prefix, 'Scripts'))" 2^>nul') do (
-        if exist "%%i\ambuild.exe" set "PATH=%%i;!PATH!"
-    )
-    REM 2. User Scripts dir (--user install)
-    for /f "delims=" %%i in ('python -c "import site; print(site.getusersitepackages().replace(chr(92)+chr(76)+chr(105)+chr(98), chr(92)+chr(83)+chr(99)+chr(114)+chr(105)+chr(112)+chr(116)+chr(115)))" 2^>nul') do (
-        if exist "%%i\ambuild.exe" set "PATH=%%i;!PATH!"
-    )
+call :find_ambuild
+if !ERRORLEVEL! equ 0 goto :ambuild_ready
 
-    where ambuild >nul 2>&1
-    if %ERRORLEVEL% neq 0 (
-        echo.
-        echo ERROR: AMBuild was installed but 'ambuild' is not on PATH.
-        echo.
-        echo Try one of these fixes:
-        echo   1. Close and reopen your command prompt, then run this script again
-        echo   2. Or add Python's Scripts directory to your PATH manually:
-        echo      For system Python:  where python  ^(look at the directory^)
-        echo      Add: ^<that directory^>\Scripts  to your PATH
-        echo   3. Or install globally:  python -m pip install --force-reinstall git+https://github.com/alliedmodders/ambuild
-        exit /b 1
-    )
-)
-:ambuild_found
-echo Found AMBuild:
-where ambuild
+echo.
+echo ERROR: AMBuild was installed but 'ambuild' could not be found.
+echo.
+echo Diagnostic info:
+python -c "import ambuild2; print('  ambuild2 package found at:', ambuild2.__file__)" 2>nul
+if %ERRORLEVEL% neq 0 echo   ambuild2 package NOT importable - install may have failed
+echo.
+echo Please do the following manually:
+echo   1. Run: python -m pip install git+https://github.com/alliedmodders/ambuild
+echo   2. Run: python -c "import sysconfig; print(sysconfig.get_path('scripts',scheme='nt_user'))"
+echo   3. Add the printed path to your system PATH
+echo   4. Close and reopen your terminal
+echo   5. Run build_windows.bat again
+exit /b 1
+
+:ambuild_ready
+echo Found AMBuild: !AMBUILD_EXE!
+echo.
 
 REM -- Clone SDKs if not present ----------------------------------------------
 cd /d "%WORK_DIR%"
 
 if not exist "hl2sdk-csgo" (
-    echo.
     echo Cloning HL2SDK ^(CSGO branch^)...
     git clone --depth 1 -b csgo https://github.com/alliedmodders/hl2sdk.git hl2sdk-csgo
     if !ERRORLEVEL! neq 0 (
@@ -108,7 +92,6 @@ if not exist "hl2sdk-csgo" (
 )
 
 if not exist "metamod-source" (
-    echo.
     echo Cloning Metamod:Source...
     git clone --depth 1 https://github.com/alliedmodders/metamod-source.git metamod-source
     if !ERRORLEVEL! neq 0 (
@@ -120,7 +103,6 @@ if not exist "metamod-source" (
 )
 
 if not exist "sourcemod" (
-    echo.
     echo Cloning SourceMod 1.8-dev...
     git clone --depth 1 -b 1.8-dev https://github.com/alliedmodders/sourcemod.git sourcemod
     if !ERRORLEVEL! neq 0 (
@@ -133,7 +115,6 @@ if not exist "sourcemod" (
     cd ..
 ) else (
     echo Found sourcemod: %WORK_DIR%\sourcemod
-    REM Ensure submodules are initialized
     if not exist "sourcemod\public\amtl\amtl" (
         echo Initializing SourceMod submodules...
         cd sourcemod
@@ -152,7 +133,7 @@ for %%L in (tier0 tier1 vstdlib mathlib interfaces steam_api) do (
         set "MISSING_LIBS=1"
     )
 )
-if "%MISSING_LIBS%"=="1" (
+if "!MISSING_LIBS!"=="1" (
     echo.
     echo WARNING: Some .lib files are missing from hl2sdk-csgo\lib\public\
     echo The linker step may fail. Check your HL2SDK clone.
@@ -181,7 +162,7 @@ if %ERRORLEVEL% neq 0 (
 
 echo.
 echo === Building ===
-ambuild
+"!AMBUILD_EXE!"
 if %ERRORLEVEL% neq 0 (
     echo.
     echo ERROR: Build failed. Check the compiler output above for details.
@@ -214,3 +195,74 @@ echo   csgo\addons\sourcemod\gamedata\fakequeries.games.txt
 echo ===================================================================
 
 endlocal
+exit /b 0
+
+REM ===========================================================================
+REM  Subroutine: find_ambuild
+REM  Searches for ambuild.exe in multiple locations and sets AMBUILD_EXE
+REM  Returns 0 if found, 1 if not found
+REM ===========================================================================
+:find_ambuild
+set "AMBUILD_EXE="
+
+REM 1. Check if already on PATH
+where ambuild.exe >nul 2>&1
+if !ERRORLEVEL! equ 0 (
+    for /f "delims=" %%p in ('where ambuild.exe') do (
+        set "AMBUILD_EXE=%%p"
+        exit /b 0
+    )
+)
+
+REM 2. Ask Python for the user scripts directory (works with Windows Store Python)
+for /f "delims=" %%d in ('python -c "import sysconfig; print(sysconfig.get_path('scripts',scheme='nt_user'))" 2^>nul') do (
+    if exist "%%d\ambuild.exe" (
+        set "AMBUILD_EXE=%%d\ambuild.exe"
+        set "PATH=%%d;!PATH!"
+        exit /b 0
+    )
+)
+
+REM 3. Ask Python for the system scripts directory
+for /f "delims=" %%d in ('python -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2^>nul') do (
+    if exist "%%d\ambuild.exe" (
+        set "AMBUILD_EXE=%%d\ambuild.exe"
+        set "PATH=%%d;!PATH!"
+        exit /b 0
+    )
+)
+
+REM 4. Check sys.prefix\Scripts (fallback)
+for /f "delims=" %%d in ('python -c "import sys,os; print(os.path.join(sys.prefix,'Scripts'))" 2^>nul') do (
+    if exist "%%d\ambuild.exe" (
+        set "AMBUILD_EXE=%%d\ambuild.exe"
+        set "PATH=%%d;!PATH!"
+        exit /b 0
+    )
+)
+
+REM 5. Check APPDATA Python Scripts (common Windows Store Python location)
+if defined APPDATA (
+    for /d %%v in ("%APPDATA%\Python\Python*") do (
+        if exist "%%v\Scripts\ambuild.exe" (
+            set "AMBUILD_EXE=%%v\Scripts\ambuild.exe"
+            set "PATH=%%v\Scripts;!PATH!"
+            exit /b 0
+        )
+    )
+)
+
+REM 6. Check LocalAppData for Windows Store Python packages
+if defined LOCALAPPDATA (
+    for /d %%p in ("%LOCALAPPDATA%\Packages\PythonSoftwareFoundation*") do (
+        for /d %%v in ("%%p\LocalCache\local-packages\Python*") do (
+            if exist "%%v\Scripts\ambuild.exe" (
+                set "AMBUILD_EXE=%%v\Scripts\ambuild.exe"
+                set "PATH=%%v\Scripts;!PATH!"
+                exit /b 0
+            )
+        )
+    )
+)
+
+exit /b 1
