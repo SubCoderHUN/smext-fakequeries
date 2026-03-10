@@ -462,7 +462,15 @@ void CReturnA2sInfo::SetAppID(int iId, bool bDefault)
 int CReturnA2sInfo::GetAppID()
 {
     if(m_bDefaultAppID)
-        return m_RealAppID;
+    {
+        // Use the Steam API to get the actual AppID the engine registered with
+        // the master server, rather than relying on steam.inf which may be stale
+        // (e.g. after CS:GO -> CS2 migration, steam.inf may report 4465480 instead of 730)
+        ISteamUtils *pUtils = SteamGameServerUtils();
+        if(pUtils)
+            return (int)pUtils->GetAppID();
+        return m_RealAppID;  // fallback to steam.inf value
+    }
     else
         return m_iAppID;
 }
