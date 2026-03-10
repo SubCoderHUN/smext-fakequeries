@@ -110,8 +110,8 @@ public:
     void SetGameDiscription(const char* sName, bool bDefault = false);
     const char* GetGameDiscription();
     
-    void SetAppID(short iId, bool bDefault = false);
-    short GetAppID();
+    void SetAppID(int iId, bool bDefault = false);
+    int GetAppID();
     
     void SetNumClients(uint8_t iClientCount, bool bDefault = false);
     uint8_t GetNumClients();
@@ -168,7 +168,7 @@ private:
     char m_GameDescription[256];
     bool m_bDefaultGameDescription;
     
-    short m_iAppID;
+    int m_iAppID;
     bool m_bDefaultAppID;
     
     uint8_t m_iNumClients;

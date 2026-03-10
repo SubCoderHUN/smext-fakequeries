@@ -235,7 +235,9 @@ bool CReturnA2sInfo::ReadSteamINF()
     }    
     strcpy(m_RealGameVersion, info[2]);
     strcpy(m_RealGameDir, g_pSM->GetGameFolderName());
-    m_RealAppID = 730;
+    m_RealAppID = atoi(info[0]);  // Read AppID from steam.inf (first line: appID=XXXX)
+    if(m_RealAppID <= 0)
+        m_RealAppID = 730;  // Fallback for safety
     fclose (pFile);
     free (buffer);
     
@@ -268,7 +270,10 @@ void CReturnA2sInfo::BuildCommunicationFrame()
     m_replyPacket.WriteString(GetMapName());
     m_replyPacket.WriteString(GetGameFolderName());
     m_replyPacket.WriteString(GetGameDiscription());
-    m_replyPacket.WriteShort(GetAppID());
+    // A2S_INFO body AppID is 16-bit. For AppIDs > 65535, protocol says to use 0
+    // and rely on the GameID EDF field instead.
+    int appId = GetAppID();
+    m_replyPacket.WriteShort(appId > 65535 ? 0 : (short)appId);
     m_replyPacket.WriteByte(GetNumClients());
     m_replyPacket.WriteByte(GetMaxClients());
     m_replyPacket.WriteByte(GetNumFakeClients());
@@ -312,7 +317,7 @@ void CReturnA2sInfo::BuildCommunicationFrame()
         m_replyPacket.WriteString(GetServerTag());
     
     if(extraData & S2A_EXTRA_DATA_GAMEID)
-        m_replyPacket.WriteLongLong(GetAppID());
+        m_replyPacket.WriteLongLong((uint64_t)GetAppID());  // Full 64-bit GameID
 }
 
 void CReturnA2sInfo::SetPassWord(bool bHavePassword, bool bDefault)
@@ -442,19 +447,19 @@ const char* CReturnA2sInfo::GetGameDiscription()
         return (const char*)m_GameDescription;
 }
 
-void CReturnA2sInfo::SetAppID(short iId, bool bDefault)
+void CReturnA2sInfo::SetAppID(int iId, bool bDefault)
 {
     if(bDefault)
     {
         m_bDefaultAppID = true;
         return;
     }
-    
+
     m_bDefaultAppID = false;
     m_iAppID = iId;
 }
 
-short CReturnA2sInfo::GetAppID()
+int CReturnA2sInfo::GetAppID()
 {
     if(m_bDefaultAppID)
         return m_RealAppID;
