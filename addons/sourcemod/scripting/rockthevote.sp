@@ -1,21 +1,17 @@
 /**
  * =============================================================================
- * Standalone Rock The Vote + Map Chooser + Nominations
- * All-in-one map voting plugin for CS:GO / Source Engine servers.
+ * Next Map Vote Plugin for CS2
+ * Triggers a map vote when any team reaches 14 round wins.
+ * The map only changes at the end of the match.
  *
  * Features:
- *   - Rock The Vote (players vote to change the map early)
- *   - End-of-map automatic vote
+ *   - Automatic vote when a team hits 14 round wins
  *   - Map nominations via chat (!nominate / !nom)
- *   - Configurable via CVars and auto-generated .cfg
  *   - Map exclusion (recently played maps)
- *   - Extend map / Don't Change options
  *   - Runoff votes when margin is too close
  *   - Admin commands: sm_mapvote, sm_setnextmap
- *   - Round-based and time-based vote triggers
  *
  * Commands:
- *   say rtv / say !rtv / sm_rtv          - Rock the Vote
  *   say nominate / say !nominate / !nom  - Nominate a map
  *   sm_mapvote (admin)                   - Force a map vote
  *   sm_setnextmap <map> (admin)          - Set next map directly
@@ -29,69 +25,38 @@
 #include <sourcemod>
 #include <nextmap>
 
-#define PLUGIN_VERSION "1.0.0"
+#define PLUGIN_VERSION "2.0.0"
 
 /* ===================== CONSTANTS ===================== */
 
-#define VOTE_EXTEND     "##extend##"
 #define VOTE_DONTCHANGE "##dontchange##"
 #define MAXTEAMS        10
-
-/* ===================== ENUMS ===================== */
-
-enum MapChange
-{
-	MapChange_Instant,
-	MapChange_RoundEnd,
-	MapChange_MapEnd
-};
+#define WIN_TRIGGER     14
 
 /* ===================== PLUGIN INFO ===================== */
 
 public Plugin myinfo =
 {
-	name        = "Rock The Vote (Standalone)",
+	name        = "Next Map Vote (Round 14)",
 	author      = "AlliedModders LLC, Modified",
-	description = "All-in-one RTV, Map Chooser, and Nominations",
+	description = "Starts a map vote when any team reaches 14 round wins. Changes map at match end.",
 	version     = PLUGIN_VERSION,
 	url         = "https://github.com/SubCoderHUN/smext-fakequeries"
 };
 
 /* ===================== CVARS ===================== */
 
-// RTV
-ConVar g_cvRtvNeeded;
-ConVar g_cvRtvMinPlayers;
-ConVar g_cvRtvInitialDelay;
-ConVar g_cvRtvInterval;
-ConVar g_cvRtvChangeTime;
-
-// Map Chooser
-ConVar g_cvEndOfMapVote;
-ConVar g_cvStartTime;
-ConVar g_cvStartRounds;
-ConVar g_cvStartFrags;
-ConVar g_cvExtendTimeStep;
-ConVar g_cvExtendRoundStep;
-ConVar g_cvExtendFragStep;
 ConVar g_cvExcludeMaps;
 ConVar g_cvIncludeMaps;
 ConVar g_cvNoVoteMode;
-ConVar g_cvExtend;
-ConVar g_cvDontChange;
 ConVar g_cvVoteDuration;
 ConVar g_cvRunOff;
 ConVar g_cvRunOffPercent;
+ConVar g_cvWinTrigger;
 
-// Nominations
+// Nomination ConVars
 ConVar g_cvNomExcludeOld;
 ConVar g_cvNomExcludeCurrent;
-
-// Game ConVars
-ConVar g_cvWinlimit;
-ConVar g_cvMaxrounds;
-ConVar g_cvFraglimit;
-ConVar g_cvBonusRoundTime;
 
 /* ===================== MAP DATA ===================== */
 
@@ -106,27 +71,13 @@ int g_mapFileSerial = -1;
 /* ===================== VOTE STATE ===================== */
 
 Menu g_VoteMenu;
-Handle g_VoteTimer;
 Handle g_RetryTimer;
 
-int g_Extends;
-int g_TotalRounds;
 bool g_HasVoteStarted;
 bool g_WaitingForVote;
 bool g_MapVoteCompleted;
-bool g_ChangeMapAtRoundEnd;
-bool g_ChangeMapInProgress;
-MapChange g_ChangeTime;
 
 int g_winCount[MAXTEAMS];
-
-/* ===================== RTV STATE ===================== */
-
-bool g_RTVVoted[MAXPLAYERS + 1];
-bool g_RTVAllowed;
-int g_RTVVoters;
-int g_RTVVotes;
-int g_RTVVotesNeeded;
 
 /* ===================== NOMINATION STATE ===================== */
 
@@ -153,26 +104,11 @@ public void OnPluginStart()
 	g_NextMapList = new ArrayList(arraySize);
 	g_NominateMapStatus = new StringMap();
 
-	// RTV ConVars
-	g_cvRtvNeeded = CreateConVar("sm_rtv_needed", "0.60", "Percentage of players needed to rock the vote (0.60 = 60%)", _, true, 0.05, true, 1.0);
-	g_cvRtvMinPlayers = CreateConVar("sm_rtv_minplayers", "0", "Minimum players required before RTV is enabled", _, true, 0.0, true, float(MAXPLAYERS));
-	g_cvRtvInitialDelay = CreateConVar("sm_rtv_initialdelay", "30.0", "Delay (seconds) before first RTV can be held after map start", _, true, 0.0);
-	g_cvRtvInterval = CreateConVar("sm_rtv_interval", "240.0", "Cooldown (seconds) after a failed RTV before another can be held", _, true, 0.0);
-	g_cvRtvChangeTime = CreateConVar("sm_rtv_changetime", "0", "When to change map after successful RTV: 0=Instant, 1=RoundEnd, 2=MapEnd", _, true, 0.0, true, 2.0);
-
-	// MapChooser ConVars
-	g_cvEndOfMapVote = CreateConVar("sm_mapvote_endvote", "1", "Run an end-of-map vote", _, true, 0.0, true, 1.0);
-	g_cvStartTime = CreateConVar("sm_mapvote_start", "3.0", "Minutes remaining to start the end-of-map vote", _, true, 1.0);
-	g_cvStartRounds = CreateConVar("sm_mapvote_startround", "2.0", "Rounds remaining to start the end-of-map vote", _, true, 0.0);
-	g_cvStartFrags = CreateConVar("sm_mapvote_startfrags", "5.0", "Frags remaining to start the end-of-map vote", _, true, 1.0);
-	g_cvExtendTimeStep = CreateConVar("sm_extendmap_timestep", "15", "Additional minutes per map extension", _, true, 5.0);
-	g_cvExtendRoundStep = CreateConVar("sm_extendmap_roundstep", "5", "Additional rounds per map extension", _, true, 1.0);
-	g_cvExtendFragStep = CreateConVar("sm_extendmap_fragstep", "10", "Additional frags per map extension", _, true, 5.0);
+	// ConVars
+	g_cvWinTrigger = CreateConVar("sm_mapvote_wintrigger", "14", "Number of round wins to trigger map vote", _, true, 1.0);
 	g_cvExcludeMaps = CreateConVar("sm_mapvote_exclude", "5", "Number of past maps to exclude from votes", _, true, 0.0);
 	g_cvIncludeMaps = CreateConVar("sm_mapvote_include", "5", "Number of maps to include in the vote", _, true, 2.0, true, 6.0);
 	g_cvNoVoteMode = CreateConVar("sm_mapvote_novote", "1", "Pick a random map if no votes are received", _, true, 0.0, true, 1.0);
-	g_cvExtend = CreateConVar("sm_mapvote_extend", "0", "Number of map extensions allowed (0 = disabled)", _, true, 0.0);
-	g_cvDontChange = CreateConVar("sm_mapvote_dontchange", "1", "Add a 'Don't Change' option to early votes (RTV)", _, true, 0.0, true, 1.0);
 	g_cvVoteDuration = CreateConVar("sm_mapvote_voteduration", "20", "Duration of the map vote (seconds)", _, true, 5.0);
 	g_cvRunOff = CreateConVar("sm_mapvote_runoff", "0", "Hold a runoff vote if winning choice has less than required margin", _, true, 0.0, true, 1.0);
 	g_cvRunOffPercent = CreateConVar("sm_mapvote_runoffpercent", "50", "Minimum vote percentage to avoid a runoff", _, true, 0.0, true, 100.0);
@@ -185,9 +121,6 @@ public void OnPluginStart()
 	RegAdminCmd("sm_mapvote", Command_ForceMapVote, ADMFLAG_CHANGEMAP, "Force a map vote to start now");
 	RegAdminCmd("sm_setnextmap", Command_SetNextmap, ADMFLAG_CHANGEMAP, "Set the next map directly");
 
-	// RTV commands
-	RegConsoleCmd("sm_rtv", Command_RTV, "Rock the Vote");
-
 	// Nomination commands
 	RegConsoleCmd("sm_nominate", Command_Nominate, "Nominate a map for the next vote");
 	RegConsoleCmd("sm_nom", Command_Nominate, "Nominate a map for the next vote");
@@ -196,45 +129,10 @@ public void OnPluginStart()
 	AddCommandListener(Listener_Say, "say");
 	AddCommandListener(Listener_Say, "say_team");
 
-	// Game ConVars
-	g_cvWinlimit = FindConVar("mp_winlimit");
-	g_cvMaxrounds = FindConVar("mp_maxrounds");
-	g_cvFraglimit = FindConVar("mp_fraglimit");
-	g_cvBonusRoundTime = FindConVar("mp_bonusroundtime");
+	// Hook round end event for CS2
+	HookEvent("round_end", Event_RoundEnd);
 
-	// Hook game events
-	if (g_cvWinlimit || g_cvMaxrounds)
-	{
-		char folder[64];
-		GetGameFolderName(folder, sizeof(folder));
-
-		if (strcmp(folder, "tf") == 0)
-		{
-			HookEvent("teamplay_win_panel", Event_TeamPlayWinPanel);
-			HookEvent("teamplay_restart_round", Event_TFRestartRound);
-			HookEvent("arena_win_panel", Event_TeamPlayWinPanel);
-		}
-		else if (strcmp(folder, "nucleardawn") == 0)
-		{
-			HookEvent("round_win", Event_RoundEnd);
-		}
-		else
-		{
-			HookEvent("round_end", Event_RoundEnd);
-		}
-	}
-
-	if (g_cvFraglimit)
-	{
-		HookEvent("player_death", Event_PlayerDeath);
-	}
-
-	AutoExecConfig(true, "rockthevote");
-
-	if (g_cvBonusRoundTime)
-	{
-		g_cvBonusRoundTime.SetBounds(ConVarBound_Upper, true, 30.0);
-	}
+	AutoExecConfig(true, "nextmapvote");
 }
 
 /* ===================== MAP / CONFIG HOOKS ===================== */
@@ -251,10 +149,7 @@ public void OnConfigsExecuted()
 
 	BuildNominateMenu();
 	CreateNextVote();
-	SetupTimeleftTimer();
 
-	g_TotalRounds = 0;
-	g_Extends = 0;
 	g_MapVoteCompleted = false;
 	g_HasVoteStarted = false;
 
@@ -265,39 +160,13 @@ public void OnConfigsExecuted()
 	{
 		g_winCount[i] = 0;
 	}
-
-	// Reset RTV state
-	g_RTVVotes = 0;
-	g_RTVVoters = 0;
-	g_RTVAllowed = false;
-	for (int i = 1; i <= MaxClients; i++)
-	{
-		g_RTVVoted[i] = false;
-	}
-
-	// Count current voters
-	for (int i = 1; i <= MaxClients; i++)
-	{
-		if (IsClientInGame(i) && !IsFakeClient(i))
-		{
-			g_RTVVoters++;
-		}
-	}
-	RecalculateRTVNeeded();
-
-	// Initial delay timer for RTV
-	CreateTimer(g_cvRtvInitialDelay.FloatValue, Timer_RTVAllow, _, TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public void OnMapEnd()
 {
 	g_HasVoteStarted = false;
 	g_WaitingForVote = false;
-	g_ChangeMapAtRoundEnd = false;
-	g_ChangeMapInProgress = false;
-	g_VoteTimer = null;
 	g_RetryTimer = null;
-	g_RTVAllowed = false;
 
 	char map[PLATFORM_MAX_PATH];
 	GetCurrentMap(map, sizeof(map));
@@ -310,38 +179,12 @@ public void OnMapEnd()
 	}
 }
 
-public void OnMapTimeLeftChanged()
-{
-	if (g_MapList.Length)
-	{
-		SetupTimeleftTimer();
-	}
-}
-
 /* ===================== CLIENT HOOKS ===================== */
-
-public void OnClientConnected(int client)
-{
-	if (IsFakeClient(client))
-		return;
-
-	g_RTVVoted[client] = false;
-	g_RTVVoters++;
-	RecalculateRTVNeeded();
-}
 
 public void OnClientDisconnect(int client)
 {
 	if (IsFakeClient(client))
 		return;
-
-	if (g_RTVVoted[client])
-	{
-		g_RTVVotes--;
-		g_RTVVoted[client] = false;
-	}
-	g_RTVVoters--;
-	RecalculateRTVNeeded();
 
 	// Remove nomination
 	int index = g_NominateOwners.FindValue(client);
@@ -363,15 +206,6 @@ public Action Listener_Say(int client, const char[] command, int argc)
 	GetCmdArgString(text, sizeof(text));
 	StripQuotes(text);
 	TrimString(text);
-
-	if (strcmp(text, "rtv", false) == 0 ||
-		strcmp(text, "!rtv", false) == 0 ||
-		strcmp(text, "rockthevote", false) == 0 ||
-		strcmp(text, "!rockthevote", false) == 0)
-	{
-		AttemptRTV(client);
-		return Plugin_Continue;
-	}
 
 	if (strcmp(text, "nominate", false) == 0 ||
 		strcmp(text, "!nominate", false) == 0 ||
@@ -406,93 +240,6 @@ public Action Listener_Say(int client, const char[] command, int argc)
 	}
 
 	return Plugin_Continue;
-}
-
-/* ===================== RTV LOGIC ===================== */
-
-public Action Command_RTV(int client, int args)
-{
-	if (!client || !IsClientInGame(client))
-		return Plugin_Handled;
-
-	AttemptRTV(client);
-	return Plugin_Handled;
-}
-
-void AttemptRTV(int client)
-{
-	if (!g_RTVAllowed)
-	{
-		PrintToChat(client, "[SM] %t", "RTV Not Allowed");
-		return;
-	}
-
-	if (g_MapVoteCompleted)
-	{
-		PrintToChat(client, "[SM] %t", "RTV Ended");
-		return;
-	}
-
-	if (g_HasVoteStarted)
-	{
-		PrintToChat(client, "[SM] %t", "RTV Started");
-		return;
-	}
-
-	if (GetClientCount(true) < g_cvRtvMinPlayers.IntValue)
-	{
-		PrintToChat(client, "[SM] %t", "Minimal Players Not Met");
-		return;
-	}
-
-	if (g_RTVVoted[client])
-	{
-		PrintToChat(client, "[SM] %t", "Already Voted", g_RTVVotes, g_RTVVotesNeeded);
-		return;
-	}
-
-	char name[MAX_NAME_LENGTH];
-	GetClientName(client, name, sizeof(name));
-
-	g_RTVVotes++;
-	g_RTVVoted[client] = true;
-
-	PrintToChatAll("[SM] %t", "RTV Requested", name, g_RTVVotes, g_RTVVotesNeeded);
-
-	if (g_RTVVotes >= g_RTVVotesNeeded)
-	{
-		StartRTVVote();
-	}
-}
-
-void StartRTVVote()
-{
-	PrintToChatAll("[SM] %t", "RTV Vote Ready");
-
-	MapChange when;
-	switch (g_cvRtvChangeTime.IntValue)
-	{
-		case 0: when = MapChange_Instant;
-		case 1: when = MapChange_RoundEnd;
-		case 2: when = MapChange_MapEnd;
-		default: when = MapChange_Instant;
-	}
-
-	InitiateVote(when);
-}
-
-void RecalculateRTVNeeded()
-{
-	g_RTVVotesNeeded = RoundToCeil(float(g_RTVVoters) * g_cvRtvNeeded.FloatValue);
-
-	if (g_RTVVotesNeeded < 1)
-		g_RTVVotesNeeded = 1;
-}
-
-public Action Timer_RTVAllow(Handle timer)
-{
-	g_RTVAllowed = true;
-	return Plugin_Stop;
 }
 
 /* ===================== NOMINATION LOGIC ===================== */
@@ -822,76 +569,23 @@ public int MenuHandler_Nominate(Menu menu, MenuAction action, int param1, int pa
 	return 0;
 }
 
-/* ===================== MAP CHOOSER LOGIC ===================== */
+/* ===================== MAP VOTE LOGIC ===================== */
 
-void SetupTimeleftTimer()
-{
-	int time;
-	if (GetMapTimeLeft(time) && time > 0)
-	{
-		int startTime = g_cvStartTime.IntValue * 60;
-		if (time - startTime < 0 && g_cvEndOfMapVote.BoolValue && !g_MapVoteCompleted && !g_HasVoteStarted)
-		{
-			InitiateVote(MapChange_MapEnd);
-		}
-		else
-		{
-			if (g_VoteTimer != null)
-			{
-				KillTimer(g_VoteTimer);
-				g_VoteTimer = null;
-			}
-
-			DataPack data;
-			g_VoteTimer = CreateDataTimer(float(time - startTime), Timer_StartMapVote, data, TIMER_FLAG_NO_MAPCHANGE);
-			data.WriteCell(view_as<int>(MapChange_MapEnd));
-			data.Reset();
-		}
-	}
-}
-
-public Action Timer_StartMapVote(Handle timer, DataPack data)
-{
-	if (timer == g_RetryTimer)
-	{
-		g_WaitingForVote = false;
-		g_RetryTimer = null;
-	}
-	else
-	{
-		g_VoteTimer = null;
-	}
-
-	if (!g_MapList.Length || !g_cvEndOfMapVote.BoolValue || g_MapVoteCompleted || g_HasVoteStarted)
-	{
-		return Plugin_Stop;
-	}
-
-	MapChange when = view_as<MapChange>(data.ReadCell());
-	InitiateVote(when);
-
-	return Plugin_Stop;
-}
-
-void InitiateVote(MapChange when)
+void InitiateVote()
 {
 	g_WaitingForVote = true;
 
 	if (IsVoteInProgress())
 	{
-		DataPack data;
-		g_RetryTimer = CreateDataTimer(5.0, Timer_StartMapVote, data, TIMER_FLAG_NO_MAPCHANGE);
-		data.WriteCell(view_as<int>(when));
-		data.Reset();
+		g_RetryTimer = CreateTimer(5.0, Timer_RetryVote, _, TIMER_FLAG_NO_MAPCHANGE);
 		return;
 	}
 
-	if (g_MapVoteCompleted && g_ChangeMapInProgress)
+	if (g_MapVoteCompleted)
 	{
 		return;
 	}
 
-	g_ChangeTime = when;
 	g_WaitingForVote = false;
 	g_HasVoteStarted = true;
 
@@ -937,16 +631,6 @@ void InitiateVote(MapChange when)
 		added++;
 	}
 
-	// Add special options
-	if ((when == MapChange_Instant || when == MapChange_RoundEnd) && g_cvDontChange.BoolValue)
-	{
-		g_VoteMenu.AddItem(VOTE_DONTCHANGE, "Don't Change");
-	}
-	else if (g_cvExtend.BoolValue && g_Extends < g_cvExtend.IntValue)
-	{
-		g_VoteMenu.AddItem(VOTE_EXTEND, "Extend Map");
-	}
-
 	if (g_VoteMenu.ItemCount == 0)
 	{
 		g_HasVoteStarted = false;
@@ -958,11 +642,24 @@ void InitiateVote(MapChange when)
 	g_VoteMenu.ExitButton = false;
 	g_VoteMenu.DisplayVoteToAll(voteDuration);
 
-	LogAction(-1, -1, "Voting for next map has started.");
-	PrintToChatAll("[SM] Voting for next map has started.");
+	LogAction(-1, -1, "Voting for next map has started (a team reached %d wins).", g_cvWinTrigger.IntValue);
+	PrintToChatAll("[SM] A team reached %d round wins! Voting for next map has started.", g_cvWinTrigger.IntValue);
 
 	// Rebuild nomination menu
 	BuildNominateMenu();
+}
+
+public Action Timer_RetryVote(Handle timer)
+{
+	g_RetryTimer = null;
+
+	if (!g_MapList.Length || g_MapVoteCompleted || g_HasVoteStarted)
+	{
+		return Plugin_Stop;
+	}
+
+	InitiateVote();
+	return Plugin_Stop;
 }
 
 public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int param2)
@@ -989,12 +686,7 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 			{
 				char map[PLATFORM_MAX_PATH], buffer[255];
 				menu.GetItem(param2, map, sizeof(map));
-				if (strcmp(map, VOTE_EXTEND, false) == 0)
-				{
-					Format(buffer, sizeof(buffer), "Extend Current Map");
-					return RedrawMenuItem(buffer);
-				}
-				else if (strcmp(map, VOTE_DONTCHANGE, false) == 0)
+				if (strcmp(map, VOTE_DONTCHANGE, false) == 0)
 				{
 					Format(buffer, sizeof(buffer), "Don't Change");
 					return RedrawMenuItem(buffer);
@@ -1010,12 +702,12 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 				char map[PLATFORM_MAX_PATH];
 				menu.GetItem(0, map, sizeof(map));
 
-				if (strcmp(map, VOTE_EXTEND, false) != 0 && strcmp(map, VOTE_DONTCHANGE, false) != 0)
+				if (strcmp(map, VOTE_DONTCHANGE, false) != 0)
 				{
 					int item = GetRandomInt(0, count - 1);
 					menu.GetItem(item, map, sizeof(map));
 
-					while (strcmp(map, VOTE_EXTEND, false) == 0 || strcmp(map, VOTE_DONTCHANGE, false) == 0)
+					while (strcmp(map, VOTE_DONTCHANGE, false) == 0)
 					{
 						item = GetRandomInt(0, count - 1);
 						menu.GetItem(item, map, sizeof(map));
@@ -1027,6 +719,7 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 					char displayName[PLATFORM_MAX_PATH];
 					GetMapDisplayName(map, displayName, sizeof(displayName));
 					PrintToChatAll("[SM] %t", "No Votes");
+					PrintToChatAll("[SM] Next map will be: %s (changes at match end).", displayName);
 				}
 			}
 
@@ -1084,89 +777,25 @@ public void Handler_VoteFinishedGeneric(Menu menu, int num_votes, int num_client
 	char displayName[PLATFORM_MAX_PATH];
 	menu.GetItem(item_info[0][VOTEINFO_ITEM_INDEX], map, sizeof(map), _, displayName, sizeof(displayName));
 
-	if (strcmp(map, VOTE_EXTEND, false) == 0)
-	{
-		g_Extends++;
-
-		int time;
-		if (GetMapTimeLimit(time))
-		{
-			if (time > 0)
-			{
-				ExtendMapTimeLimit(g_cvExtendTimeStep.IntValue * 60);
-			}
-		}
-
-		if (g_cvWinlimit)
-		{
-			int winlimit = g_cvWinlimit.IntValue;
-			if (winlimit)
-			{
-				g_cvWinlimit.IntValue = winlimit + g_cvExtendRoundStep.IntValue;
-			}
-		}
-
-		if (g_cvMaxrounds)
-		{
-			int maxrounds = g_cvMaxrounds.IntValue;
-			if (maxrounds)
-			{
-				g_cvMaxrounds.IntValue = maxrounds + g_cvExtendRoundStep.IntValue;
-			}
-		}
-
-		if (g_cvFraglimit)
-		{
-			int fraglimit = g_cvFraglimit.IntValue;
-			if (fraglimit)
-			{
-				g_cvFraglimit.IntValue = fraglimit + g_cvExtendFragStep.IntValue;
-			}
-		}
-
-		int percent = RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES]) / float(num_votes) * 100.0);
-		PrintToChatAll("[SM] The current map has been extended. (Received %d%% of %d votes)", percent, num_votes);
-		LogAction(-1, -1, "Voting for next map has finished. The current map has been extended.");
-
-		g_HasVoteStarted = false;
-		CreateNextVote();
-		SetupTimeleftTimer();
-	}
-	else if (strcmp(map, VOTE_DONTCHANGE, false) == 0)
+	if (strcmp(map, VOTE_DONTCHANGE, false) == 0)
 	{
 		int percent = RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES]) / float(num_votes) * 100.0);
 		PrintToChatAll("[SM] %t", "Current Map Stays");
 		LogAction(-1, -1, "Voting for next map has finished. 'No Change' was the winner");
 
 		g_HasVoteStarted = false;
-		CreateNextVote();
-		SetupTimeleftTimer();
 	}
 	else
 	{
-		if (g_ChangeTime == MapChange_MapEnd)
-		{
-			SetNextMap(map);
-		}
-		else if (g_ChangeTime == MapChange_Instant)
-		{
-			DataPack dp;
-			CreateDataTimer(2.0, Timer_ChangeMap, dp);
-			dp.WriteString(map);
-			g_ChangeMapInProgress = false;
-		}
-		else // MapChange_RoundEnd
-		{
-			SetNextMap(map);
-			g_ChangeMapAtRoundEnd = true;
-		}
+		// Always set next map - map changes at match end only
+		SetNextMap(map);
 
 		g_HasVoteStarted = false;
 		g_MapVoteCompleted = true;
 
 		int percent = RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES]) / float(num_votes) * 100.0);
-		PrintToChatAll("[SM] %t", "Changing Maps", displayName);
-		LogAction(-1, -1, "Voting for next map has finished. Nextmap: %s.", map);
+		PrintToChatAll("[SM] Next map will be: %s (%d%% of %d votes). Map changes at match end!", displayName, percent, num_votes);
+		LogAction(-1, -1, "Voting for next map has finished. Nextmap: %s (will change at match end).", map);
 	}
 }
 
@@ -1174,7 +803,19 @@ public void Handler_VoteFinishedGeneric(Menu menu, int num_votes, int num_client
 
 public Action Command_ForceMapVote(int client, int args)
 {
-	InitiateVote(MapChange_MapEnd);
+	if (g_MapVoteCompleted)
+	{
+		ReplyToCommand(client, "[SM] A map vote has already been completed.");
+		return Plugin_Handled;
+	}
+
+	if (g_HasVoteStarted)
+	{
+		ReplyToCommand(client, "[SM] A map vote is already in progress.");
+		return Plugin_Handled;
+	}
+
+	InitiateVote();
 	return Plugin_Handled;
 }
 
@@ -1209,56 +850,12 @@ public Action Command_SetNextmap(int client, int args)
 
 /* ===================== GAME EVENTS ===================== */
 
-public void Event_TFRestartRound(Event event, const char[] name, bool dontBroadcast)
-{
-	g_TotalRounds = 0;
-}
-
-public void Event_TeamPlayWinPanel(Event event, const char[] name, bool dontBroadcast)
-{
-	if (g_ChangeMapAtRoundEnd)
-	{
-		g_ChangeMapAtRoundEnd = false;
-		CreateTimer(2.0, Timer_ChangeMap, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
-		g_ChangeMapInProgress = true;
-	}
-
-	int bluescore = event.GetInt("blue_score");
-	int redscore = event.GetInt("red_score");
-
-	if (event.GetInt("round_complete") == 1 || StrEqual(name, "arena_win_panel"))
-	{
-		g_TotalRounds++;
-
-		if (!g_MapList.Length || g_HasVoteStarted || g_MapVoteCompleted || !g_cvEndOfMapVote.BoolValue)
-			return;
-
-		CheckMaxRounds(g_TotalRounds);
-
-		switch (event.GetInt("winning_team"))
-		{
-			case 3: CheckWinLimit(bluescore);
-			case 2: CheckWinLimit(redscore);
-		}
-	}
-}
-
 public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
 {
-	if (g_ChangeMapAtRoundEnd)
-	{
-		g_ChangeMapAtRoundEnd = false;
-		CreateTimer(2.0, Timer_ChangeMap, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
-		g_ChangeMapInProgress = true;
-	}
+	int winner = event.GetInt("winner");
 
-	int winner;
-	if (strcmp(name, "round_win") == 0)
-		winner = event.GetInt("team");
-	else
-		winner = event.GetInt("winner");
-
-	if (winner == 0 || winner == 1 || !g_cvEndOfMapVote.BoolValue)
+	// Ignore no-winner or draw rounds (0 = no team, 1 = draw/spectator)
+	if (winner <= 1)
 		return;
 
 	if (winner >= MAXTEAMS)
@@ -1266,88 +863,18 @@ public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
 		SetFailState("Mod exceeds maximum team count.");
 	}
 
-	g_TotalRounds++;
 	g_winCount[winner]++;
 
+	// Check if any team reached the win trigger
 	if (!g_MapList.Length || g_HasVoteStarted || g_MapVoteCompleted)
 		return;
 
-	CheckWinLimit(g_winCount[winner]);
-	CheckMaxRounds(g_TotalRounds);
-}
+	int trigger = g_cvWinTrigger.IntValue;
 
-public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast)
-{
-	if (!g_MapList.Length || !g_cvFraglimit || g_HasVoteStarted || g_MapVoteCompleted)
-		return;
-
-	if (!g_cvFraglimit.IntValue || !g_cvEndOfMapVote.BoolValue)
-		return;
-
-	int fragger = GetClientOfUserId(event.GetInt("attacker"));
-	if (!fragger)
-		return;
-
-	if (GetClientFrags(fragger) >= (g_cvFraglimit.IntValue - g_cvStartFrags.IntValue))
+	if (g_winCount[winner] >= trigger)
 	{
-		InitiateVote(MapChange_MapEnd);
+		InitiateVote();
 	}
-}
-
-void CheckWinLimit(int winner_score)
-{
-	if (g_cvWinlimit)
-	{
-		int winlimit = g_cvWinlimit.IntValue;
-		if (winlimit)
-		{
-			if (winner_score >= (winlimit - g_cvStartRounds.IntValue))
-			{
-				InitiateVote(MapChange_MapEnd);
-			}
-		}
-	}
-}
-
-void CheckMaxRounds(int roundcount)
-{
-	if (g_cvMaxrounds)
-	{
-		int maxrounds = g_cvMaxrounds.IntValue;
-		if (maxrounds)
-		{
-			if (roundcount >= (maxrounds - g_cvStartRounds.IntValue))
-			{
-				InitiateVote(MapChange_MapEnd);
-			}
-		}
-	}
-}
-
-/* ===================== MAP CHANGE TIMER ===================== */
-
-public Action Timer_ChangeMap(Handle hTimer, DataPack dp)
-{
-	g_ChangeMapInProgress = false;
-
-	char map[PLATFORM_MAX_PATH];
-
-	if (dp == null || dp == view_as<DataPack>(INVALID_HANDLE))
-	{
-		if (!GetNextMap(map, sizeof(map)))
-		{
-			return Plugin_Stop;
-		}
-	}
-	else
-	{
-		dp.Reset();
-		dp.ReadString(map, sizeof(map));
-	}
-
-	ForceChangeLevel(map, "Map Vote");
-
-	return Plugin_Stop;
 }
 
 /* ===================== HELPERS ===================== */
@@ -1405,4 +932,3 @@ void CreateNextVote()
 
 	delete tempMaps;
 }
-
