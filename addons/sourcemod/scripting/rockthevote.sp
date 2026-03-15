@@ -1,22 +1,22 @@
 /**
  * =============================================================================
- * Next Map Vote Plugin for CS2
- * Triggers a map vote when any team reaches 14 round wins.
- * The map only changes at the end of the match.
+ * Kovetkezo Palya Szavazas Plugin CS2-hoz
+ * Palya szavazast indit, amikor barmelyik csapat eleri a 14 korgyozelmet.
+ * A palya csak a meccs vegen valtozik.
  *
- * Features:
- *   - Automatic vote when a team hits 14 round wins
- *   - Rock the Vote (!rtv) to force a map vote by player demand
- *   - Map nominations via chat (!nominate / !nom)
- *   - Map exclusion (recently played maps)
- *   - Runoff votes when margin is too close
- *   - Admin commands: sm_mapvote, sm_setnextmap
+ * Funkciok:
+ *   - Automatikus szavazas, ha egy csapat eleri a 14 korgyozelmet
+ *   - Rock the Vote (!rtv) - jatekosok altal kezdemenyezett szavazas
+ *   - Palya jeloles chaten keresztul (!nominate / !nom)
+ *   - Palya kizaras (nemreg jatszott palyak)
+ *   - Ujraszavazas, ha tul szoros az eredmeny
+ *   - Admin parancsok: sm_mapvote, sm_setnextmap
  *
- * Commands:
+ * Parancsok:
  *   say !rtv / rtv                       - Rock the Vote
- *   say nominate / say !nominate / !nom  - Nominate a map
- *   sm_mapvote (admin)                   - Force a map vote
- *   sm_setnextmap <map> (admin)          - Set next map directly
+ *   say nominate / say !nominate / !nom  - Palya jelolese
+ *   sm_mapvote (admin)                   - Szavazas kenyszeritese
+ *   sm_setnextmap <palya> (admin)        - Kovetkezo palya beallitasa
  *
  * =============================================================================
  */
@@ -24,21 +24,23 @@
 #pragma newdecls required
 #include <sourcemod>
 #include <nextmap>
+#include <multicolors>
 #define PLUGIN_VERSION "2.0.0"
-/* ===================== CONSTANTS ===================== */
+#define PREFIX "{darkred}[{default}NexxoN - SyStem{darkred}]{default}"
+/* ===================== KONSTANSOK ===================== */
 #define VOTE_DONTCHANGE "##dontchange##"
 #define MAXTEAMS        10
 #define WIN_TRIGGER     14
 /* ===================== PLUGIN INFO ===================== */
 public Plugin myinfo =
 {
-	name        = "Next Map Vote (Round 14)",
-	author      = "AlliedModders LLC, Modified",
-	description = "Starts a map vote when any team reaches 14 round wins. Changes map at match end.",
+	name        = "Kovetkezo Palya Szavazas (14. Kor)",
+	author      = "AlliedModders LLC, Modositva",
+	description = "Palya szavazast indit, ha barmelyik csapat eleri a 14 korgyozelmet. Palya a meccs vegen valtozik.",
 	version     = PLUGIN_VERSION,
 	url         = "https://github.com/SubCoderHUN/smext-fakequeries"
 };
-/* ===================== CVARS ===================== */
+/* ===================== CVAROK ===================== */
 ConVar g_cvExcludeMaps;
 ConVar g_cvIncludeMaps;
 ConVar g_cvNoVoteMode;
@@ -46,31 +48,31 @@ ConVar g_cvVoteDuration;
 ConVar g_cvRunOff;
 ConVar g_cvRunOffPercent;
 ConVar g_cvWinTrigger;
-// Nomination ConVars
+// Jeloles CVariok
 ConVar g_cvNomExcludeOld;
 ConVar g_cvNomExcludeCurrent;
-// RTV ConVars
+// RTV CVariok
 ConVar g_cvRTVPercent;
 ConVar g_cvRTVDelay;
-/* ===================== MAP DATA ===================== */
+/* ===================== PALYA ADATOK ===================== */
 ArrayList g_MapList;
 ArrayList g_NominateList;
 ArrayList g_NominateOwners;
 ArrayList g_OldMapList;
 ArrayList g_NextMapList;
 int g_mapFileSerial = -1;
-/* ===================== VOTE STATE ===================== */
+/* ===================== SZAVAZAS ALLAPOT ===================== */
 Menu g_VoteMenu;
 Handle g_RetryTimer;
 bool g_HasVoteStarted;
 bool g_WaitingForVote;
 bool g_MapVoteCompleted;
 int g_winCount[MAXTEAMS];
-/* ===================== RTV STATE ===================== */
+/* ===================== RTV ALLAPOT ===================== */
 bool g_bPlayerRTV[MAXPLAYERS + 1];
 int g_iRTVCount;
 float g_fMapStartTime;
-/* ===================== NOMINATION STATE ===================== */
+/* ===================== JELOLES ALLAPOT ===================== */
 Menu g_NominateMenu;
 StringMap g_NominateMapStatus;
 #define MAPSTATUS_ENABLED     (0)
@@ -78,7 +80,7 @@ StringMap g_NominateMapStatus;
 #define MAPSTATUS_EXCLUDE_OLD (1 << 1)
 #define MAPSTATUS_EXCLUDE_CUR (1 << 2)
 #define MAPSTATUS_EXCLUDE_NOM (1 << 3)
-/* ===================== PLUGIN LIFECYCLE ===================== */
+/* ===================== PLUGIN ELETCIKLUS ===================== */
 public void OnPluginStart()
 {
 	LoadTranslations("rockthevote.phrases");
@@ -89,43 +91,43 @@ public void OnPluginStart()
 	g_OldMapList = new ArrayList(arraySize);
 	g_NextMapList = new ArrayList(arraySize);
 	g_NominateMapStatus = new StringMap();
-	// ConVars
-	g_cvWinTrigger = CreateConVar("sm_mapvote_wintrigger", "14", "Number of round wins to trigger map vote", _, true, 1.0);
-	g_cvExcludeMaps = CreateConVar("sm_mapvote_exclude", "5", "Number of past maps to exclude from votes", _, true, 0.0);
-	g_cvIncludeMaps = CreateConVar("sm_mapvote_include", "5", "Number of maps to include in the vote", _, true, 2.0, true, 6.0);
-	g_cvNoVoteMode = CreateConVar("sm_mapvote_novote", "1", "Pick a random map if no votes are received", _, true, 0.0, true, 1.0);
-	g_cvVoteDuration = CreateConVar("sm_mapvote_voteduration", "20", "Duration of the map vote (seconds)", _, true, 5.0);
-	g_cvRunOff = CreateConVar("sm_mapvote_runoff", "0", "Hold a runoff vote if winning choice has less than required margin", _, true, 0.0, true, 1.0);
-	g_cvRunOffPercent = CreateConVar("sm_mapvote_runoffpercent", "50", "Minimum vote percentage to avoid a runoff", _, true, 0.0, true, 100.0);
-	// Nomination ConVars
-	g_cvNomExcludeOld = CreateConVar("sm_nominate_excludeold", "1", "Exclude recently played maps from nominations", _, true, 0.0, true, 1.0);
-	g_cvNomExcludeCurrent = CreateConVar("sm_nominate_excludecurrent", "1", "Exclude the current map from nominations", _, true, 0.0, true, 1.0);
-	// RTV ConVars
-	g_cvRTVPercent = CreateConVar("sm_rtv_percent", "60", "Percentage of players needed to trigger RTV", _, true, 1.0, true, 100.0);
-	g_cvRTVDelay = CreateConVar("sm_rtv_delay", "120.0", "Delay in seconds after map start before !rtv is allowed", _, true, 0.0, true, 600.0);
-	// Admin commands
-	RegAdminCmd("sm_mapvote", Command_ForceMapVote, ADMFLAG_CHANGEMAP, "Force a map vote to start now");
-	RegAdminCmd("sm_setnextmap", Command_SetNextmap, ADMFLAG_CHANGEMAP, "Set the next map directly");
-	// Nomination commands
-	RegConsoleCmd("sm_nominate", Command_Nominate, "Nominate a map for the next vote");
-	RegConsoleCmd("sm_nom", Command_Nominate, "Nominate a map for the next vote");
-	// RTV command
-	RegConsoleCmd("sm_rtv", Command_RTV, "Rock the Vote - vote to change the map");
-	// Chat triggers
+	// CVariok
+	g_cvWinTrigger = CreateConVar("sm_mapvote_wintrigger", "14", "Korgyozelmek szama a szavazas inditasahoz", _, true, 1.0);
+	g_cvExcludeMaps = CreateConVar("sm_mapvote_exclude", "5", "Kizart korabbi palyak szama", _, true, 0.0);
+	g_cvIncludeMaps = CreateConVar("sm_mapvote_include", "5", "Szavazasban szereplo palyak szama", _, true, 2.0, true, 6.0);
+	g_cvNoVoteMode = CreateConVar("sm_mapvote_novote", "1", "Veletlenszeru palya valasztas, ha senki nem szavaz", _, true, 0.0, true, 1.0);
+	g_cvVoteDuration = CreateConVar("sm_mapvote_voteduration", "20", "Szavazas idotartama (masodperc)", _, true, 5.0);
+	g_cvRunOff = CreateConVar("sm_mapvote_runoff", "0", "Ujraszavazas, ha a gyoztes nem eri el a minimalis aranyt", _, true, 0.0, true, 1.0);
+	g_cvRunOffPercent = CreateConVar("sm_mapvote_runoffpercent", "50", "Minimalis szavazati arany az ujraszavazas elkerulesehez", _, true, 0.0, true, 100.0);
+	// Jeloles CVariok
+	g_cvNomExcludeOld = CreateConVar("sm_nominate_excludeold", "1", "Nemreg jatszott palyak kizarasa a jelolesbol", _, true, 0.0, true, 1.0);
+	g_cvNomExcludeCurrent = CreateConVar("sm_nominate_excludecurrent", "1", "Jelenlegi palya kizarasa a jelolesbol", _, true, 0.0, true, 1.0);
+	// RTV CVariok
+	g_cvRTVPercent = CreateConVar("sm_rtv_percent", "60", "Jatekosok szazaleka az RTV inditasahoz", _, true, 1.0, true, 100.0);
+	g_cvRTVDelay = CreateConVar("sm_rtv_delay", "120.0", "Varakozasi ido masodpercben a palya indulasa utan az !rtv engedelyezeseig", _, true, 0.0, true, 600.0);
+	// Admin parancsok
+	RegAdminCmd("sm_mapvote", Command_ForceMapVote, ADMFLAG_CHANGEMAP, "Palya szavazas azonnali inditasa");
+	RegAdminCmd("sm_setnextmap", Command_SetNextmap, ADMFLAG_CHANGEMAP, "Kovetkezo palya kozvetlen beallitasa");
+	// Jeloles parancsok
+	RegConsoleCmd("sm_nominate", Command_Nominate, "Palya jelolese a kovetkezo szavazasra");
+	RegConsoleCmd("sm_nom", Command_Nominate, "Palya jelolese a kovetkezo szavazasra");
+	// RTV parancs
+	RegConsoleCmd("sm_rtv", Command_RTV, "Rock the Vote - szavazas a palyavaltoztatasra");
+	// Chat triggerek
 	AddCommandListener(Listener_Say, "say");
 	AddCommandListener(Listener_Say, "say_team");
-	// Hook round end event for CS2
+	// Round end event hook CS2-hoz
 	HookEvent("round_end", Event_RoundEnd);
 	AutoExecConfig(true, "nextmapvote");
 }
-/* ===================== MAP / CONFIG HOOKS ===================== */
+/* ===================== PALYA / CONFIG HOOKOK ===================== */
 public void OnConfigsExecuted()
 {
 	if (ReadMapList(g_MapList, g_mapFileSerial, "default", MAPLIST_FLAG_CLEARARRAY|MAPLIST_FLAG_MAPSFOLDER) != null)
 	{
 		if (g_mapFileSerial == -1)
 		{
-			LogError("Unable to create a valid map list.");
+			LogError("Nem sikerult ervenyes palyalistat letrehozni.");
 		}
 	}
 	BuildNominateMenu();
@@ -138,7 +140,7 @@ public void OnConfigsExecuted()
 	{
 		g_winCount[i] = 0;
 	}
-	// Reset RTV state
+	// RTV allapot visszaallitasa
 	g_iRTVCount = 0;
 	g_fMapStartTime = GetGameTime();
 	for (int i = 1; i <= MaxClients; i++)
@@ -160,26 +162,26 @@ public void OnMapEnd()
 		g_OldMapList.Erase(0);
 	}
 }
-/* ===================== CLIENT HOOKS ===================== */
+/* ===================== KLIENS HOOKOK ===================== */
 public void OnClientDisconnect(int client)
 {
 	if (IsFakeClient(client))
 		return;
-	// Remove nomination
+	// Jeloles eltavolitasa
 	int index = g_NominateOwners.FindValue(client);
 	if (index != -1)
 	{
 		g_NominateList.Erase(index);
 		g_NominateOwners.Erase(index);
 	}
-	// Remove RTV vote
+	// RTV szavazat eltavolitasa
 	if (g_bPlayerRTV[client])
 	{
 		g_bPlayerRTV[client] = false;
 		g_iRTVCount--;
 	}
 }
-/* ===================== CHAT LISTENER ===================== */
+/* ===================== CHAT FIGYELESE ===================== */
 public Action Listener_Say(int client, const char[] command, int argc)
 {
 	if (!client || !IsClientInGame(client))
@@ -188,7 +190,7 @@ public Action Listener_Say(int client, const char[] command, int argc)
 	GetCmdArgString(text, sizeof(text));
 	StripQuotes(text);
 	TrimString(text);
-	// RTV chat triggers
+	// RTV chat triggerek
 	if (strcmp(text, "rtv", false) == 0 ||
 		strcmp(text, "!rtv", false) == 0)
 	{
@@ -203,7 +205,7 @@ public Action Listener_Say(int client, const char[] command, int argc)
 		OpenNominateMenu(client);
 		return Plugin_Continue;
 	}
-	// Check for "!nominate <mapname>" or "nominate <mapname>"
+	// "!nominate <palyanev>" vagy "nominate <palyanev>" ellenorzese
 	if (strncmp(text, "!nominate ", 10, false) == 0 ||
 		strncmp(text, "nominate ", 9, false) == 0 ||
 		strncmp(text, "!nom ", 5, false) == 0 ||
@@ -225,19 +227,19 @@ public Action Listener_Say(int client, const char[] command, int argc)
 	}
 	return Plugin_Continue;
 }
-/* ===================== RTV LOGIC ===================== */
+/* ===================== RTV LOGIKA ===================== */
 public Action Command_RTV(int client, int args)
 {
 	if (!client || !IsClientInGame(client))
 		return Plugin_Handled;
 	if (g_MapVoteCompleted)
 	{
-		PrintToChat(client, "[SM] %t", "RTV Ended");
+		CPrintToChat(client, "%s A kovetkezo palya mar el lett dontve.", PREFIX);
 		return Plugin_Handled;
 	}
 	if (g_HasVoteStarted)
 	{
-		PrintToChat(client, "[SM] A map vote is already in progress.");
+		CPrintToChat(client, "%s Mar folyamatban van egy palya szavazas.", PREFIX);
 		return Plugin_Handled;
 	}
 	float delay = g_cvRTVDelay.FloatValue;
@@ -245,7 +247,7 @@ public Action Command_RTV(int client, int args)
 	if (elapsed < delay)
 	{
 		int remaining = RoundToCeil(delay - elapsed);
-		PrintToChat(client, "[SM] You must wait %d seconds before you can RTV.", remaining);
+		CPrintToChat(client, "%s Meg {green}%d{default} masodpercet kell varnod, mielott hasznalhatod az RTV-t.", PREFIX, remaining);
 		return Plugin_Handled;
 	}
 	if (g_bPlayerRTV[client])
@@ -253,9 +255,9 @@ public Action Command_RTV(int client, int args)
 		int playersNeeded = GetRTVPlayersNeeded();
 		int remaining = playersNeeded - g_iRTVCount;
 		if (remaining > 0)
-			PrintToChat(client, "[SM] You have already rocked the vote. (%d more needed)", remaining);
+			CPrintToChat(client, "%s Mar szavaztal az RTV-re. (Meg {green}%d{default} jatekos kell)", PREFIX, remaining);
 		else
-			PrintToChat(client, "[SM] You have already rocked the vote.");
+			CPrintToChat(client, "%s Mar szavaztal az RTV-re.", PREFIX);
 		return Plugin_Handled;
 	}
 	g_bPlayerRTV[client] = true;
@@ -266,12 +268,12 @@ public Action Command_RTV(int client, int args)
 	GetClientName(client, playerName, sizeof(playerName));
 	if (remaining <= 0)
 	{
-		PrintToChatAll("[SM] %s rocked the vote! Enough players have voted - starting map vote...", playerName);
+		CPrintToChatAll("%s {green}%s{default} szavazott! Eleg jatekos szavazott - palya szavazas indul...", PREFIX, playerName);
 		InitiateVote();
 	}
 	else
 	{
-		PrintToChatAll("[SM] %s wants to rock the vote! (%d more needed)", playerName, remaining);
+		CPrintToChatAll("%s {green}%s{default} palyavaltoztatast szeretne! (Meg {green}%d{default} jatekos kell)", PREFIX, playerName, remaining);
 	}
 	return Plugin_Handled;
 }
@@ -292,7 +294,7 @@ int GetRTVPlayersNeeded()
 	}
 	return needed;
 }
-/* ===================== NOMINATION LOGIC ===================== */
+/* ===================== JELOLES LOGIKA ===================== */
 public Action Command_Nominate(int client, int args)
 {
 	if (!client || !IsClientInGame(client))
@@ -314,12 +316,12 @@ void OpenNominateMenu(int client)
 {
 	if (g_MapVoteCompleted)
 	{
-		PrintToChat(client, "[SM] %t", "RTV Ended");
+		CPrintToChat(client, "%s A kovetkezo palya mar el lett dontve.", PREFIX);
 		return;
 	}
 	if (g_NominateMenu == null)
 	{
-		PrintToChat(client, "[SM] No maps available for nomination.");
+		CPrintToChat(client, "%s Nincsenek elerheto palyak jelolesre.", PREFIX);
 		return;
 	}
 	g_NominateMenu.Display(client, MENU_TIME_FOREVER);
@@ -328,10 +330,10 @@ void AttemptNominateByName(int client, const char[] mapname)
 {
 	if (g_MapVoteCompleted)
 	{
-		PrintToChat(client, "[SM] %t", "RTV Ended");
+		CPrintToChat(client, "%s A kovetkezo palya mar el lett dontve.", PREFIX);
 		return;
 	}
-	// Find matching maps
+	// Egyezo palyak keresese
 	char resolvedMap[PLATFORM_MAX_PATH];
 	ArrayList matches = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 	for (int i = 0; i < g_MapList.Length; i++)
@@ -345,7 +347,7 @@ void AttemptNominateByName(int client, const char[] mapname)
 	}
 	if (matches.Length == 0)
 	{
-		PrintToChat(client, "[SM] No maps found matching \"%s\".", mapname);
+		CPrintToChat(client, "%s Nem talalhato palya \"{green}%s{default}\" nevre.", PREFIX, mapname);
 		delete matches;
 		return;
 	}
@@ -356,7 +358,7 @@ void AttemptNominateByName(int client, const char[] mapname)
 		NominateMap(client, resolvedMap);
 		return;
 	}
-	// Check for exact match first
+	// Pontos egyezes ellenorzese
 	for (int i = 0; i < matches.Length; i++)
 	{
 		char entry[PLATFORM_MAX_PATH];
@@ -368,9 +370,9 @@ void AttemptNominateByName(int client, const char[] mapname)
 			return;
 		}
 	}
-	// Multiple matches - show a menu
+	// Tobb talalat - menu megjelenites
 	Menu menu = new Menu(MenuHandler_NominateSearch);
-	menu.SetTitle("Multiple maps found:");
+	menu.SetTitle("Tobb palya talalhato:");
 	int count = matches.Length;
 	if (count > 10) count = 10;
 	for (int i = 0; i < count; i++)
@@ -383,7 +385,7 @@ void AttemptNominateByName(int client, const char[] mapname)
 	}
 	if (matches.Length > 10)
 	{
-		PrintToChat(client, "[SM] Found %d maps, showing first 10. Be more specific.", matches.Length);
+		CPrintToChat(client, "%s {green}%d{default} palya talalhato, az elso 10 megjelenik. Legy pontosabb.", PREFIX, matches.Length);
 	}
 	menu.Display(client, MENU_TIME_FOREVER);
 	delete matches;
@@ -408,27 +410,27 @@ void NominateMap(int client, const char[] map)
 	strcopy(resolvedMap, sizeof(resolvedMap), map);
 	if (FindMap(resolvedMap, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
 	{
-		PrintToChat(client, "[SM] Map \"%s\" was not found.", map);
+		CPrintToChat(client, "%s A(z) \"{green}%s{default}\" palya nem talalhato.", PREFIX, map);
 		return;
 	}
-	// Check if already nominated
+	// Mar jelolt-e
 	if (g_NominateList.FindString(resolvedMap) != -1)
 	{
-		PrintToChat(client, "[SM] Map \"%s\" is already nominated.", map);
+		CPrintToChat(client, "%s A(z) \"{green}%s{default}\" palya mar jelolve van.", PREFIX, map);
 		return;
 	}
-	// Check current map
+	// Jelenlegi palya ellenorzese
 	if (g_cvNomExcludeCurrent.BoolValue)
 	{
 		char currentMap[PLATFORM_MAX_PATH];
 		GetCurrentMap(currentMap, sizeof(currentMap));
 		if (strcmp(resolvedMap, currentMap, false) == 0)
 		{
-			PrintToChat(client, "[SM] You cannot nominate the current map.");
+			CPrintToChat(client, "%s Nem jelolheted a jelenlegi palyat.", PREFIX);
 			return;
 		}
 	}
-	// Check recently played
+	// Nemreg jatszott palyak ellenorzese
 	if (g_cvNomExcludeOld.BoolValue)
 	{
 		char oldMap[PLATFORM_MAX_PATH];
@@ -437,22 +439,22 @@ void NominateMap(int client, const char[] map)
 			g_OldMapList.GetString(i, oldMap, sizeof(oldMap));
 			if (strcmp(resolvedMap, oldMap, false) == 0)
 			{
-				PrintToChat(client, "[SM] Map \"%s\" was recently played.", map);
+				CPrintToChat(client, "%s A(z) \"{green}%s{default}\" palyat nemreg jatszottak.", PREFIX, map);
 				return;
 			}
 		}
 	}
-	// Replace existing nomination by this client
+	// Korabbi jeloles csereje, ha van
 	int ownerIndex = g_NominateOwners.FindValue(client);
 	if (ownerIndex != -1)
 	{
 		g_NominateList.Erase(ownerIndex);
 		g_NominateOwners.Erase(ownerIndex);
 	}
-	// Check if nomination list is full
+	// Jelolesi lista tele van-e
 	if (g_NominateList.Length >= g_cvIncludeMaps.IntValue)
 	{
-		PrintToChat(client, "[SM] The nomination list is full.");
+		CPrintToChat(client, "%s A jelolesi lista megtelt.", PREFIX);
 		return;
 	}
 	g_NominateList.PushString(resolvedMap);
@@ -461,8 +463,8 @@ void NominateMap(int client, const char[] map)
 	GetMapDisplayName(resolvedMap, displayName, sizeof(displayName));
 	char name[MAX_NAME_LENGTH];
 	GetClientName(client, name, sizeof(name));
-	PrintToChatAll("[SM] %s nominated %s.", name, displayName);
-	// Rebuild nomination menu to reflect new status
+	CPrintToChatAll("%s {green}%s{default} jelolte a(z) {green}%s{default} palyat.", PREFIX, name, displayName);
+	// Jelolesi menu ujraepitese
 	BuildNominateMenu();
 }
 void BuildNominateMenu()
@@ -470,7 +472,7 @@ void BuildNominateMenu()
 	delete g_NominateMenu;
 	g_NominateMapStatus.Clear();
 	g_NominateMenu = new Menu(MenuHandler_Nominate, MENU_ACTIONS_ALL);
-	g_NominateMenu.SetTitle("Nominate a Map");
+	g_NominateMenu.SetTitle("Palya jelolese");
 	char map[PLATFORM_MAX_PATH];
 	char currentMap[PLATFORM_MAX_PATH];
 	GetCurrentMap(currentMap, sizeof(currentMap));
@@ -545,19 +547,19 @@ public int MenuHandler_Nominate(Menu menu, MenuAction action, int param1, int pa
 				if (status & MAPSTATUS_EXCLUDE_CUR)
 				{
 					char buffer[PLATFORM_MAX_PATH + 32];
-					Format(buffer, sizeof(buffer), "%s (Current)", displayName);
+					Format(buffer, sizeof(buffer), "%s (Jelenlegi)", displayName);
 					return RedrawMenuItem(buffer);
 				}
 				else if (status & MAPSTATUS_EXCLUDE_OLD)
 				{
 					char buffer[PLATFORM_MAX_PATH + 32];
-					Format(buffer, sizeof(buffer), "%s (Recently Played)", displayName);
+					Format(buffer, sizeof(buffer), "%s (Nemreg jatszott)", displayName);
 					return RedrawMenuItem(buffer);
 				}
 				else if (status & MAPSTATUS_EXCLUDE_NOM)
 				{
 					char buffer[PLATFORM_MAX_PATH + 32];
-					Format(buffer, sizeof(buffer), "%s (Nominated)", displayName);
+					Format(buffer, sizeof(buffer), "%s (Jelolve)", displayName);
 					return RedrawMenuItem(buffer);
 				}
 			}
@@ -566,7 +568,7 @@ public int MenuHandler_Nominate(Menu menu, MenuAction action, int param1, int pa
 	}
 	return 0;
 }
-/* ===================== MAP VOTE LOGIC ===================== */
+/* ===================== PALYA SZAVAZAS LOGIKA ===================== */
 void InitiateVote()
 {
 	g_WaitingForVote = true;
@@ -582,13 +584,13 @@ void InitiateVote()
 	g_WaitingForVote = false;
 	g_HasVoteStarted = true;
 	g_VoteMenu = new Menu(Handler_MapVoteMenu, MENU_ACTIONS_ALL);
-	g_VoteMenu.SetTitle("Vote Nextmap");
+	g_VoteMenu.SetTitle("Szavazz a kovetkezo palyara");
 	g_VoteMenu.VoteResultCallback = Handler_MapVoteFinished;
 	char map[PLATFORM_MAX_PATH];
 	int nominateCount = g_NominateList.Length;
 	int voteSize = g_cvIncludeMaps.IntValue;
 	int nominationsToAdd = nominateCount >= voteSize ? voteSize : nominateCount;
-	// Add nominated maps first
+	// Jelolt palyak hozzaadasa eloszor
 	for (int i = 0; i < nominationsToAdd; i++)
 	{
 		char displayName[PLATFORM_MAX_PATH];
@@ -597,10 +599,10 @@ void InitiateVote()
 		g_VoteMenu.AddItem(map, displayName);
 		RemoveStringFromArray(g_NextMapList, map);
 	}
-	// Clear nominations
+	// Jelolesek torlese
 	g_NominateOwners.Clear();
 	g_NominateList.Clear();
-	// Fill remaining slots with random maps
+	// Fennmarado helyek feltoltese veletlenszeru palyakkal
 	int added = nominationsToAdd;
 	int count = 0;
 	int availableMaps = g_NextMapList.Length;
@@ -624,9 +626,9 @@ void InitiateVote()
 	int voteDuration = g_cvVoteDuration.IntValue;
 	g_VoteMenu.ExitButton = false;
 	g_VoteMenu.DisplayVoteToAll(voteDuration);
-	LogAction(-1, -1, "Voting for next map has started.");
-	PrintToChatAll("[SM] Voting for next map has started!");
-	// Rebuild nomination menu
+	LogAction(-1, -1, "Palya szavazas elindult.");
+	CPrintToChatAll("%s A kovetkezo palya szavazas elindult!", PREFIX);
+	// Jelolesi menu ujraepitese
 	BuildNominateMenu();
 }
 public Action Timer_RetryVote(Handle timer)
@@ -651,7 +653,7 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 		case MenuAction_Display:
 		{
 			char buffer[255];
-			Format(buffer, sizeof(buffer), "Vote for the next map!");
+			Format(buffer, sizeof(buffer), "Szavazz a kovetkezo palyara!");
 			Panel panel = view_as<Panel>(param2);
 			panel.SetTitle(buffer);
 		}
@@ -663,7 +665,7 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 				menu.GetItem(param2, map, sizeof(map));
 				if (strcmp(map, VOTE_DONTCHANGE, false) == 0)
 				{
-					Format(buffer, sizeof(buffer), "Don't Change");
+					Format(buffer, sizeof(buffer), "Ne valtoztasd");
 					return RedrawMenuItem(buffer);
 				}
 			}
@@ -688,8 +690,8 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 					g_MapVoteCompleted = true;
 					char displayName[PLATFORM_MAX_PATH];
 					GetMapDisplayName(map, displayName, sizeof(displayName));
-					PrintToChatAll("[SM] %t", "No Votes");
-					PrintToChatAll("[SM] Next map will be: %s (changes at match end).", displayName);
+					CPrintToChatAll("%s Senki nem szavazott.", PREFIX);
+					CPrintToChatAll("%s A kovetkezo palya: {green}%s{default} (meccs vegen valt).", PREFIX, displayName);
 				}
 			}
 			g_HasVoteStarted = false;
@@ -705,9 +707,9 @@ public void Handler_MapVoteFinished(Menu menu, int num_votes, int num_clients, c
 		float required = num_votes * (g_cvRunOffPercent.FloatValue / 100.0);
 		if (winningvotes < required)
 		{
-			// Runoff vote
+			// Ujraszavazas
 			g_VoteMenu = new Menu(Handler_MapVoteMenu, MENU_ACTIONS_ALL);
-			g_VoteMenu.SetTitle("Runoff Vote Nextmap");
+			g_VoteMenu.SetTitle("Ujraszavazas - Kovetkezo Palya");
 			g_VoteMenu.VoteResultCallback = Handler_VoteFinishedGeneric;
 			char map[PLATFORM_MAX_PATH];
 			char info1[PLATFORM_MAX_PATH];
@@ -721,9 +723,9 @@ public void Handler_MapVoteFinished(Menu menu, int num_votes, int num_clients, c
 			g_VoteMenu.DisplayVoteToAll(voteDuration);
 			float map1percent = float(item_info[0][VOTEINFO_ITEM_VOTES]) / float(num_votes) * 100.0;
 			float map2percent = float(item_info[1][VOTEINFO_ITEM_VOTES]) / float(num_votes) * 100.0;
-			PrintToChatAll("[SM] No map got over %.0f%% votes (%s [%.0f%%] & %s [%.0f%%]), starting runoff vote.",
-				g_cvRunOffPercent.FloatValue, info1, map1percent, info2, map2percent);
-			LogMessage("Voting for next map was indecisive, beginning runoff vote");
+			CPrintToChatAll("%s Egyik palya sem erte el a %.0f%%-ot (%s [%.0f%%] es %s [%.0f%%]), ujraszavazas indul.",
+				PREFIX, g_cvRunOffPercent.FloatValue, info1, map1percent, info2, map2percent);
+			LogMessage("A palya szavazas dontetlennel vegzodott, ujraszavazas indul");
 			return;
 		}
 	}
@@ -736,33 +738,32 @@ public void Handler_VoteFinishedGeneric(Menu menu, int num_votes, int num_client
 	menu.GetItem(item_info[0][VOTEINFO_ITEM_INDEX], map, sizeof(map), _, displayName, sizeof(displayName));
 	if (strcmp(map, VOTE_DONTCHANGE, false) == 0)
 	{
-		int percent = RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES]) / float(num_votes) * 100.0);
-		PrintToChatAll("[SM] %t", "Current Map Stays");
-		LogAction(-1, -1, "Voting for next map has finished. 'No Change' was the winner");
+		CPrintToChatAll("%s A jelenlegi palya marad!", PREFIX);
+		LogAction(-1, -1, "Palya szavazas befejezodott. 'Ne valtoztasd' nyert.");
 		g_HasVoteStarted = false;
 	}
 	else
 	{
-		// Always set next map - map changes at match end only
+		// Kovetkezo palya beallitasa - palya csak meccs vegen valtozik
 		SetNextMap(map);
 		g_HasVoteStarted = false;
 		g_MapVoteCompleted = true;
 		int percent = RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES]) / float(num_votes) * 100.0);
-		PrintToChatAll("[SM] Next map will be: %s (%d%% of %d votes). Map changes at match end!", displayName, percent, num_votes);
-		LogAction(-1, -1, "Voting for next map has finished. Nextmap: %s (will change at match end).", map);
+		CPrintToChatAll("%s A kovetkezo palya: {green}%s{default} ({green}%d%%{default}, %d szavazatbol). A palya a meccs vegen valtozik!", PREFIX, displayName, percent, num_votes);
+		LogAction(-1, -1, "Palya szavazas befejezodott. Kovetkezo palya: %s (meccs vegen valt).", map);
 	}
 }
-/* ===================== ADMIN COMMANDS ===================== */
+/* ===================== ADMIN PARANCSOK ===================== */
 public Action Command_ForceMapVote(int client, int args)
 {
 	if (g_MapVoteCompleted)
 	{
-		ReplyToCommand(client, "[SM] A map vote has already been completed.");
+		CPrintToChat(client, "%s A palya szavazas mar lezarult.", PREFIX);
 		return Plugin_Handled;
 	}
 	if (g_HasVoteStarted)
 	{
-		ReplyToCommand(client, "[SM] A map vote is already in progress.");
+		CPrintToChat(client, "%s Mar folyamatban van egy palya szavazas.", PREFIX);
 		return Plugin_Handled;
 	}
 	InitiateVote();
@@ -772,7 +773,7 @@ public Action Command_SetNextmap(int client, int args)
 {
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_setnextmap <map>");
+		CPrintToChat(client, "%s Hasznalat: sm_setnextmap <palya>", PREFIX);
 		return Plugin_Handled;
 	}
 	char map[PLATFORM_MAX_PATH];
@@ -780,29 +781,31 @@ public Action Command_SetNextmap(int client, int args)
 	GetCmdArg(1, map, sizeof(map));
 	if (FindMap(map, displayName, sizeof(displayName)) == FindMap_NotFound)
 	{
-		ReplyToCommand(client, "[SM] Map \"%s\" was not found.", map);
+		CPrintToChat(client, "%s A(z) \"{green}%s{default}\" palya nem talalhato.", PREFIX, map);
 		return Plugin_Handled;
 	}
 	GetMapDisplayName(displayName, displayName, sizeof(displayName));
-	ShowActivity2(client, "[SM] ", "Changed nextmap to \"%s\".", displayName);
-	LogAction(client, -1, "\"%L\" changed nextmap to \"%s\"", client, map);
+	char name[MAX_NAME_LENGTH];
+	GetClientName(client, name, sizeof(name));
+	CPrintToChatAll("%s {green}%s{default} atallitotta a kovetkezo palyat: {green}%s{default}.", PREFIX, name, displayName);
+	LogAction(client, -1, "\"%L\" atallitotta a kovetkezo palyat: \"%s\"", client, map);
 	SetNextMap(map);
 	g_MapVoteCompleted = true;
 	return Plugin_Handled;
 }
-/* ===================== GAME EVENTS ===================== */
+/* ===================== JATEK ESEMENYEK ===================== */
 public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
 {
 	int winner = event.GetInt("winner");
-	// Ignore no-winner or draw rounds (0 = no team, 1 = draw/spectator)
+	// Nyertes nelkuli vagy dontetlen korok figyelmen kivul hagyasa
 	if (winner <= 1)
 		return;
 	if (winner >= MAXTEAMS)
 	{
-		SetFailState("Mod exceeds maximum team count.");
+		SetFailState("A mod meghaladja a maximalis csapat szamot.");
 	}
 	g_winCount[winner]++;
-	// Check if any team reached the win trigger
+	// Ellenorzes, hogy barmelyik csapat elerte-e a gyozelmi kuszubot
 	if (!g_MapList.Length || g_HasVoteStarted || g_MapVoteCompleted)
 		return;
 	int trigger = g_cvWinTrigger.IntValue;
@@ -811,7 +814,7 @@ public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
 		InitiateVote();
 	}
 }
-/* ===================== HELPERS ===================== */
+/* ===================== SEGEDFUGGVENYEK ===================== */
 bool RemoveStringFromArray(ArrayList array, const char[] str)
 {
 	int index = array.FindString(str);
@@ -835,10 +838,10 @@ void CreateNextVote()
 			tempMaps.PushString(map);
 		}
 	}
-	// Remove current map
+	// Jelenlegi palya eltavolitasa
 	GetCurrentMap(map, sizeof(map));
 	RemoveStringFromArray(tempMaps, map);
-	// Remove recently played maps
+	// Nemreg jatszott palyak eltavolitasa
 	if (g_cvExcludeMaps.IntValue && tempMaps.Length > g_cvExcludeMaps.IntValue)
 	{
 		for (int i = 0; i < g_OldMapList.Length; i++)
@@ -847,7 +850,7 @@ void CreateNextVote()
 			RemoveStringFromArray(tempMaps, map);
 		}
 	}
-	// Pick random maps for the vote pool
+	// Veletlenszeru palyak valasztasa a szavazasi poolba
 	int limit = (g_cvIncludeMaps.IntValue < tempMaps.Length ? g_cvIncludeMaps.IntValue : tempMaps.Length);
 	for (int i = 0; i < limit; i++)
 	{
