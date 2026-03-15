@@ -29,15 +29,24 @@ bool g_bVoteFinished;
 char g_NextMap[PLATFORM_MAX_PATH];
 bool g_bMapChangeNeeded;
 
+// RTV player tracking
+bool g_bPlayerRTV[MAXPLAYERS + 1];
+int g_iRTVCount;
+
 // ConVars
 ConVar g_cvMapListFile;
 ConVar g_cvWinRoundsTrigger;
 ConVar g_cvVoteDuration;
 ConVar g_cvExcludeMaps;
+ConVar g_cvRTVPercent;
+ConVar g_cvRTVDelay;
 
 // Exclude recently played maps
 char g_OldMaps[MAX_MAPS][PLATFORM_MAX_PATH];
 int g_OldMapCount;
+
+// Map start time for RTV delay
+float g_fMapStartTime;
 
 public void OnPluginStart()
 {
@@ -45,6 +54,10 @@ public void OnPluginStart()
 	g_cvWinRoundsTrigger = CreateConVar("sm_rtv14_rounds", "14", "Number of round wins to trigger the vote", _, true, 1.0, true, 15.0);
 	g_cvVoteDuration = CreateConVar("sm_rtv14_vote_duration", "20", "Vote duration in seconds", _, true, 10.0, true, 60.0);
 	g_cvExcludeMaps = CreateConVar("sm_rtv14_exclude", "3", "Number of recent maps to exclude from vote", _, true, 0.0, true, 10.0);
+	g_cvRTVPercent = CreateConVar("sm_rtv14_rtv_percent", "60", "Percentage of players needed to trigger RTV", _, true, 1.0, true, 100.0);
+	g_cvRTVDelay = CreateConVar("sm_rtv14_rtv_delay", "120.0", "Delay in seconds after map start before !rtv is allowed", _, true, 0.0, true, 600.0);
+
+	RegConsoleCmd("sm_rtv", Command_RTV, "Rock the Vote - vote to change the map");
 
 	HookEvent("round_end", Event_RoundEnd);
 	HookEvent("cs_win_panel_match", Event_MatchEnd);
@@ -60,6 +73,13 @@ public void OnMapStart()
 	g_bVoteFinished = false;
 	g_bMapChangeNeeded = false;
 	g_NextMap[0] = '\0';
+	g_iRTVCount = 0;
+	g_fMapStartTime = GetGameTime();
+
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		g_bPlayerRTV[i] = false;
+	}
 
 	LoadMapList();
 }
@@ -135,6 +155,90 @@ void LoadMapList()
 
 	delete file;
 	LogMessage("[RTV14] Loaded %d maps from %s", g_MapCount, filePath);
+}
+
+public void OnClientDisconnect(int client)
+{
+	if (g_bPlayerRTV[client])
+	{
+		g_bPlayerRTV[client] = false;
+		g_iRTVCount--;
+	}
+}
+
+public Action Command_RTV(int client, int args)
+{
+	if (client == 0)
+	{
+		return Plugin_Handled;
+	}
+
+	if (g_bVoteFinished)
+	{
+		PrintToChat(client, "\x01[\x04RTV\x01] The next map has already been decided: \x04%s\x01.", g_NextMap);
+		return Plugin_Handled;
+	}
+
+	if (g_bVoteStarted)
+	{
+		PrintToChat(client, "\x01[\x04RTV\x01] A map vote is already in progress.");
+		return Plugin_Handled;
+	}
+
+	float delay = g_cvRTVDelay.FloatValue;
+	float elapsed = GetGameTime() - g_fMapStartTime;
+	if (elapsed < delay)
+	{
+		int remaining = RoundToCeil(delay - elapsed);
+		PrintToChat(client, "\x01[\x04RTV\x01] You must wait \x04%d\x01 seconds before you can RTV.", remaining);
+		return Plugin_Handled;
+	}
+
+	if (g_bPlayerRTV[client])
+	{
+		PrintToChat(client, "\x01[\x04RTV\x01] You have already rocked the vote.");
+		return Plugin_Handled;
+	}
+
+	g_bPlayerRTV[client] = true;
+	g_iRTVCount++;
+
+	int playersNeeded = GetRTVPlayersNeeded();
+	int remaining = playersNeeded - g_iRTVCount;
+
+	if (remaining <= 0)
+	{
+		PrintToChatAll("\x01[\x04RTV\x01] RTV vote succeeded! Starting map vote...");
+		StartMapVote();
+	}
+	else
+	{
+		char playerName[MAX_NAME_LENGTH];
+		GetClientName(client, playerName, sizeof(playerName));
+		PrintToChatAll("\x01[\x04RTV\x01] \x04%s\x01 wants to rock the vote! (\x04%d\x01 more needed)", playerName, remaining);
+	}
+
+	return Plugin_Handled;
+}
+
+int GetRTVPlayersNeeded()
+{
+	int playerCount = 0;
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (IsClientInGame(i) && !IsFakeClient(i))
+		{
+			playerCount++;
+		}
+	}
+
+	int needed = RoundToCeil(float(playerCount) * g_cvRTVPercent.FloatValue / 100.0);
+	if (needed < 1)
+	{
+		needed = 1;
+	}
+
+	return needed;
 }
 
 public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
