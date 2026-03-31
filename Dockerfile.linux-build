@@ -1,0 +1,47 @@
+FROM debian:bullseye
+
+RUN dpkg --add-architecture i386 && \
+    apt-get update && \
+    apt-get install -y \
+      build-essential \
+      gcc-multilib \
+      g++-multilib \
+      python3 \
+      python3-pip \
+      git \
+      lib32stdc++6 \
+      lib32z1 \
+      libc6-dev-i386 \
+      ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install ambuild
+
+ARG SDKS=csgo
+ARG SM_BRANCH=1.11-dev
+ARG MMS_BRANCH=1.11-dev
+
+WORKDIR /build
+
+# Clone dependencies
+RUN git clone --depth 1 https://github.com/nicedayzhu/hl2sdk-csgo.git /build/hl2sdk-csgo && \
+    git clone --depth 1 -b ${SM_BRANCH} https://github.com/nicedayzhu/sourcemod.git /build/sourcemod && \
+    git clone --depth 1 -b ${MMS_BRANCH} https://github.com/nicedayzhu/metamod-source.git /build/metamod-source
+
+COPY . /build/smext-fakequeries
+
+WORKDIR /build/smext-fakequeries
+
+RUN mkdir -p build && cd build && \
+    python3 ../configure.py \
+      --hl2sdk-root /build \
+      --sm-path /build/sourcemod \
+      --mms-path /build/metamod-source \
+      --sdks ${SDKS} \
+      --enable-optimize
+
+RUN cd build && ambuild
+
+RUN echo "Build complete. Output files:" && \
+    find /build/smext-fakequeries/build/fakequeries -name "*.so" -type f 2>/dev/null && \
+    find /build/smext-fakequeries/build -name "*.so" -type f 2>/dev/null
