@@ -41,7 +41,7 @@ jobs:
 
       - name: Clone SourceMod
         run: |
-          git clone --depth 1 -b 1.8-dev https://github.com/alliedmodders/sourcemod.git ../sourcemod
+          git clone --depth 1 -b 1.11-dev https://github.com/alliedmodders/sourcemod.git ../sourcemod
           cd ../sourcemod && git submodule update --init --depth 1
 
       - name: Clone Metamod:Source

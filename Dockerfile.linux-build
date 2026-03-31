@@ -18,7 +18,7 @@ RUN dpkg --add-architecture i386 && \
 RUN pip3 install git+https://github.com/alliedmodders/ambuild
 
 ARG SDKS=csgo
-ARG SM_BRANCH=1.8-dev
+ARG SM_BRANCH=1.11-dev
 ARG MMS_BRANCH=1.11-dev
 
 WORKDIR /build
