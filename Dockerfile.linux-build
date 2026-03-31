@@ -15,18 +15,19 @@ RUN dpkg --add-architecture i386 && \
       ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install ambuild
+RUN pip3 install git+https://github.com/alliedmodders/ambuild
 
 ARG SDKS=csgo
-ARG SM_BRANCH=1.11-dev
+ARG SM_BRANCH=1.8-dev
 ARG MMS_BRANCH=1.11-dev
 
 WORKDIR /build
 
-# Clone dependencies
-RUN git clone --depth 1 https://github.com/nicedayzhu/hl2sdk-csgo.git /build/hl2sdk-csgo && \
-    git clone --depth 1 -b ${SM_BRANCH} https://github.com/nicedayzhu/sourcemod.git /build/sourcemod && \
-    git clone --depth 1 -b ${MMS_BRANCH} https://github.com/nicedayzhu/metamod-source.git /build/metamod-source
+# Clone dependencies (same repos/branches as the Windows build script)
+RUN git clone --depth 1 -b csgo https://github.com/alliedmodders/hl2sdk.git /build/hl2sdk-csgo && \
+    git clone --depth 1 -b ${SM_BRANCH} https://github.com/alliedmodders/sourcemod.git /build/sourcemod && \
+    cd /build/sourcemod && git submodule update --init --depth 1 && \
+    git clone --depth 1 -b ${MMS_BRANCH} https://github.com/alliedmodders/metamod-source.git /build/metamod-source
 
 COPY . /build/smext-fakequeries
 

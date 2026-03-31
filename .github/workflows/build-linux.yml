@@ -33,19 +33,20 @@ jobs:
             lib32stdc++6 \
             lib32z1 \
             libc6-dev-i386
-          pip3 install ambuild
+          pip3 install git+https://github.com/alliedmodders/ambuild
 
       - name: Clone HL2SDK
         run: |
-          git clone --depth 1 https://github.com/nicedayzhu/hl2sdk-csgo.git ../hl2sdk-csgo
+          git clone --depth 1 -b csgo https://github.com/alliedmodders/hl2sdk.git ../hl2sdk-csgo
 
       - name: Clone SourceMod
         run: |
-          git clone --depth 1 -b 1.11-dev https://github.com/nicedayzhu/sourcemod.git ../sourcemod
+          git clone --depth 1 -b 1.8-dev https://github.com/alliedmodders/sourcemod.git ../sourcemod
+          cd ../sourcemod && git submodule update --init --depth 1
 
       - name: Clone Metamod:Source
         run: |
-          git clone --depth 1 -b 1.11-dev https://github.com/nicedayzhu/metamod-source.git ../metamod-source
+          git clone --depth 1 -b 1.11-dev https://github.com/alliedmodders/metamod-source.git ../metamod-source
 
       - name: Configure
         run: |
