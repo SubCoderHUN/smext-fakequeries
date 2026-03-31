@@ -371,7 +371,8 @@ void CReturnA2sInfo::SetServerName(const char* sName, bool bDefault)
     }
     
     m_bDefaultServerName = false;
-    strncpy(m_ServerName, sName, sizeof(m_ServerName));
+    strncpy(m_ServerName, sName, sizeof(m_ServerName) - 1);
+    m_ServerName[sizeof(m_ServerName) - 1] = '\0';
 }
 
 const char* CReturnA2sInfo::GetServerName()
@@ -391,7 +392,8 @@ void CReturnA2sInfo::SetMapName(const char* sName, bool bDefault)
     }
     
     m_bDefaultMapName = false;
-    strncpy(m_MapName, sName, sizeof(m_MapName));
+    strncpy(m_MapName, sName, sizeof(m_MapName) - 1);
+    m_MapName[sizeof(m_MapName) - 1] = '\0';
 }
 
 const char* CReturnA2sInfo::GetMapName()
@@ -411,7 +413,8 @@ void CReturnA2sInfo::SetGameFolderName(const char* sName, bool bDefault)
     }
     
     m_bDefaultFolderName = false;
-    strncpy(m_FolderName, sName, sizeof(m_FolderName));
+    strncpy(m_FolderName, sName, sizeof(m_FolderName) - 1);
+    m_FolderName[sizeof(m_FolderName) - 1] = '\0';
 }
 
 const char* CReturnA2sInfo::GetGameFolderName()
@@ -431,7 +434,8 @@ void CReturnA2sInfo::SetGameDiscription(const char* sName, bool bDefault)
     }
     
     m_bDefaultGameDescription = false;
-    strncpy(m_GameDescription, sName, sizeof(m_GameDescription));
+    strncpy(m_GameDescription, sName, sizeof(m_GameDescription) - 1);
+    m_GameDescription[sizeof(m_GameDescription) - 1] = '\0';
 }
 
 const char* CReturnA2sInfo::GetGameDiscription()
@@ -604,7 +608,8 @@ void CReturnA2sInfo::SetGameVersion(const char* sGameVersion, bool bDefault)
     }
     
     m_bDefaultGameVersion = false;
-    strncpy(m_GameVersion, sGameVersion, sizeof(m_GameVersion));
+    strncpy(m_GameVersion, sGameVersion, sizeof(m_GameVersion) - 1);
+    m_GameVersion[sizeof(m_GameVersion) - 1] = '\0';
 }
 
 const char* CReturnA2sInfo::GetGameVersion()
@@ -624,7 +629,8 @@ void CReturnA2sInfo::SetServerTag(const char* sServerTag, bool bDefault)
     }
     
     m_bDefaultServerTag = false;
-    strncpy(m_ServerTag, sServerTag, sizeof(m_ServerTag));
+    strncpy(m_ServerTag, sServerTag, sizeof(m_ServerTag) - 1);
+    m_ServerTag[sizeof(m_ServerTag) - 1] = '\0';
 }
 
 const char* CReturnA2sInfo::GetServerTag()
